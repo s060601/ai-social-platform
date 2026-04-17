@@ -256,6 +256,49 @@ app.post("/api/suggest", async (req, res) => {
       return res.status(400).json({ error: "参数不完整" });
     }
 
+    const formattedMessages = (messages || []).map((m) => ({
+      role: m.sender === "me" ? "user" : "assistant",
+      content: m.text,
+    }));
+
+    const completion = await client.chat.completions.create({
+      model: process.env.OPENAI_MODEL,
+      messages: [
+        {
+          role: "system",
+          content: `你是“沟通练习”产品中的示范回复助手。
+你的任务不是闲聊，而是根据当前社交场景，生成一句用户可以直接参考的回复。
+
+要求：
+1. 只输出一句中文，不要解释。
+2. 语气自然、简短、口语化。
+3. 必须紧扣当前场景，不要跑题。
+4. 回复长度控制在10到25个字左右。
+5. 如果是开场阶段，要像真实聊天里的第一轮回应。`,
+        },
+        {
+          role: "user",
+          content: `当前场景：${sceneTitle}\n训练目标：${sceneHint}\n开场白：${starter}`,
+        },
+        ...formattedMessages,
+      ],
+      temperature: 0.7,
+    });
+
+    const suggestion =
+      completion.choices?.[0]?.message?.content?.trim() ||
+      "你好，我刚下课，正准备过去。";
+
+    res.json({ suggestion });
+  } catch (error) {
+    console.error("/api/suggest error:", error);
+    res.status(500).json({
+      error: "示范生成失败",
+      detail: error?.message || "unknown error",
+    });
+  }
+});
+
     const prompt = `
 你是一个“沟通练习”产品中的示范回复助手。
 你的任务不是和用户闲聊，而是根据当前社交场景，生成一句适合用户直接参考的回复。
