@@ -7,7 +7,14 @@ import OpenAI from "openai";
 dotenv.config();
 
 const app = express();
-app.use(cors());
+app.use(
+  cors({
+    origin: [
+      "http://localhost:5173",
+      "https://ai-social-platform.vercel.app",
+    ],
+  })
+);
 app.use(express.json());
 
 const port = process.env.PORT || 3001;
@@ -24,6 +31,14 @@ function safeParseJSON(text) {
     return null;
   }
 }
+
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, message: "server is running" });
+});
+
+app.get("/", (req, res) => {
+  res.send("backend is running");
+});
 
 app.get("/api/health", (req, res) => {
   res.json({ ok: true, message: "server is running" });
@@ -78,6 +93,14 @@ app.post("/api/chat", async (req, res) => {
       detail: error?.message || "unknown error",
     });
   }
+});
+
+app.get("/", (req, res) => {
+  res.send("backend is running");
+});
+
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, message: "server is running" });
 });
 
 app.post("/api/assist", async (req, res) => {
@@ -135,6 +158,14 @@ app.post("/api/assist", async (req, res) => {
       detail: error?.message || "unknown error",
     });
   }
+});
+
+app.get("/", (req, res) => {
+  res.send("backend is running");
+});
+
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, message: "server is running" });
 });
 
 app.post("/api/score", async (req, res) => {
@@ -209,6 +240,14 @@ app.post("/api/score", async (req, res) => {
   }
 });
 
+app.get("/", (req, res) => {
+  res.send("backend is running");
+});
+
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, message: "server is running" });
+});
+
 app.post("/api/suggest", async (req, res) => {
   try {
     const { sceneTitle, sceneHint, starter, messages } = req.body;
@@ -254,10 +293,8 @@ app.post("/api/suggest", async (req, res) => {
   }
 });
 
-const PORT = 3001;
-
-const server = app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+const server = app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
 });
 
 server.on("error", (err) => {
