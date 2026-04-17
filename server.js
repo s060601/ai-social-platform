@@ -298,43 +298,6 @@ app.post("/api/suggest", async (req, res) => {
   }
 });
 
-    const prompt = `
-你是一个“沟通练习”产品中的示范回复助手。
-你的任务不是和用户闲聊，而是根据当前社交场景，生成一句适合用户直接参考的回复。
-
-要求：
-1. 只输出一句中文，不要解释。
-2. 语气自然、简短、口语化。
-3. 必须紧扣当前场景，不要跑题。
-4. 回复长度控制在 10 到 25 个字左右。
-5. 如果是开场场景，要像真实聊天里的第一轮回应。
-6. 如果已有对话历史，要结合最后一条对方消息来生成。
-
-当前场景：${sceneTitle}
-训练目标：${sceneHint}
-开场白：${starter}
-对话历史：${JSON.stringify(messages || [])}
-`;
-
-    const completion = await client.chat.completions.create({
-      model: process.env.OPENAI_MODEL,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.7,
-    });
-
-    const suggestion =
-      completion.choices?.[0]?.message?.content?.trim() || "你好，我刚下课，正准备过去。";
-
-    res.json({ suggestion });
-  } catch (error) {
-    console.error("/api/suggest error:", error);
-    res.status(500).json({
-      error: "示范生成失败",
-      detail: error?.message || "unknown error",
-    });
-  }
-});
-
 const server = app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
