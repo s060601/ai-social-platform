@@ -1,4 +1,5 @@
 console.log("🔥 server.js 已启动");
+
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -25,10 +26,6 @@ function safeParseJSON(text) {
   }
 }
 
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true, message: "server is running" });
-});
-
 app.get("/", (req, res) => {
   res.send("backend is running");
 });
@@ -46,7 +43,7 @@ app.post("/api/chat", async (req, res) => {
     }
 
     const systemPrompt = `
-你是一个“孤独症青少年社会技能训练平台”中的互动角色。
+你是一个“沟通练习”产品中的互动角色。
 你的目标不是闲聊，而是帮助用户练习社交表达。
 
 要求：
@@ -86,14 +83,6 @@ app.post("/api/chat", async (req, res) => {
       detail: error?.message || "unknown error",
     });
   }
-});
-
-app.get("/", (req, res) => {
-  res.send("backend is running");
-});
-
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true, message: "server is running" });
 });
 
 app.post("/api/assist", async (req, res) => {
@@ -151,14 +140,6 @@ app.post("/api/assist", async (req, res) => {
       detail: error?.message || "unknown error",
     });
   }
-});
-
-app.get("/", (req, res) => {
-  res.send("backend is running");
-});
-
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true, message: "server is running" });
 });
 
 app.post("/api/score", async (req, res) => {
@@ -231,14 +212,6 @@ app.post("/api/score", async (req, res) => {
       detail: error?.message || "unknown error",
     });
   }
-});
-
-app.get("/", (req, res) => {
-  res.send("backend is running");
-});
-
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true, message: "server is running" });
 });
 
 app.post("/api/suggest", async (req, res) => {
