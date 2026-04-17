@@ -7,14 +7,7 @@ import OpenAI from "openai";
 dotenv.config();
 
 const app = express();
-app.use(
-  cors({
-    origin: [
-      "http://localhost:5173",
-      "https://ai-social-platform.vercel.app",
-    ],
-  })
-);
+app.use(cors());
 app.use(express.json());
 
 const port = process.env.PORT || 3001;
