@@ -267,6 +267,43 @@ app.post("/api/suggest", async (req, res) => {
         {
           role: "system",
           content: `你是“沟通练习”产品中的示范回复助手。
+你的任务是生成一句自然的社交回复。
+
+要求：
+1. 只输出一句中文
+2. 简短自然
+3. 不要解释
+4. 必须贴合当前场景`,
+        },
+        {
+          role: "user",
+          content: `场景：${sceneTitle}\n目标：${sceneHint}\n开场：${starter}`,
+        },
+        ...formattedMessages,
+      ],
+      temperature: 0.7,
+    });
+
+    const suggestion =
+      completion.choices?.[0]?.message?.content?.trim() ||
+      "你好，我刚下课，准备过去。";
+
+    res.json({ suggestion });
+  } catch (error) {
+    console.error("/api/suggest error:", error);
+    res.status(500).json({
+      error: "示范生成失败",
+      detail: error?.message || "unknown error",
+    });
+  }
+});
+
+    const completion = await client.chat.completions.create({
+      model: process.env.OPENAI_MODEL,
+      messages: [
+        {
+          role: "system",
+          content: `你是“沟通练习”产品中的示范回复助手。
 你的任务不是闲聊，而是根据当前社交场景，生成一句用户可以直接参考的回复。
 
 要求：
