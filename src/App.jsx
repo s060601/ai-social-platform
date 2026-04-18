@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { API_BASE } from "./config";
 
 const scenes = [
   {
@@ -203,7 +204,7 @@ export default function AISocialSkillsPlatform() {
 
     try {
       const [chatRes, scoreRes] = await Promise.all([
-        fetch("http://localhost:3001/api/chat", {
+        fetch(`${API_BASE}/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -213,7 +214,7 @@ export default function AISocialSkillsPlatform() {
             messages: nextMessages,
           }),
         }),
-        fetch("http://localhost:3001/api/score", {
+        fetch(`${API_BASE}/api/score", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -256,7 +257,7 @@ export default function AISocialSkillsPlatform() {
     if (!text || assistLoading) return;
     setAssistLoading(true);
     try {
-      const res = await fetch("http://localhost:3001/api/assist", {
+      const res = await fetch(`${API_BASE}/api/assist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
@@ -276,7 +277,7 @@ export default function AISocialSkillsPlatform() {
   setSuggestionLoading(true);
 
   try {
-    const res = await fetch("http://localhost:3001/api/suggest", {
+    const res = await fetch(`${API_BASE}/api/suggest`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
