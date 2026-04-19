@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { API_BASE } from "./config";
+import { createCozeVoiceSession } from "./cozeVoiceClient";
 
 const scenes = [
   {
@@ -34,6 +35,7 @@ const voiceScenarios = [
     opening: "你好，我是老师。我想确认一下你今天的作业完成得怎么样？",
     hint: "练习接电话、简短回应和礼貌结束通话",
     sample: "老师您好，我已经写了一部分，还有两题不会。",
+    roleStyle: "你是一位正在电话里确认作业情况的班主任。语气清楚、直接、像老师在核实信息；可以追问完成了多少、哪里不会、明天是否需要帮助。",
   },
   {
     id: 2,
@@ -43,6 +45,7 @@ const voiceScenarios = [
     opening: "喂，我们周末想一起去公园，你愿意来吗？",
     hint: "练习回应邀请、表达意愿和继续沟通",
     sample: "可以呀，我愿意去。你们准备几点出发？",
+    roleStyle: "你是同龄同学小林，正在轻松地邀请朋友周末出去玩。语气要像同学聊天，可以问对方愿不愿意、几点方便、想不想带东西。",
   },
   {
     id: 3,
@@ -52,6 +55,7 @@ const voiceScenarios = [
     opening: "你好，我这边在登记情况，你今天为什么没有按时到校呢？",
     hint: "练习说明原因、表达需求和保持清晰",
     sample: "老师您好，我今天早上身体不太舒服，所以来晚了。",
+    roleStyle: "你是负责登记请假情况的值班老师。语气平稳、正式、关心但不哄人；需要确认原因、到校时间、是否需要联系家长或班主任。",
   },
 ];
 
@@ -170,7 +174,85 @@ export default function AISocialSkillsPlatform() {
   const [voiceInput, setVoiceInput] = useState("");
   const [voiceMessages, setVoiceMessages] = useState([{ sender: "caller", text: voiceScenarios[0].opening }]);
   const [voiceStatus, setVoiceStatus] = useState("等待接听");
-  const [voiceFeedback, setVoiceFeedback] = useState("接听后进行一轮通话练习，系统会根据你的表达给出反馈。")
+  const [voiceFeedback, setVoiceFeedback] = useState("接听后进行一轮通话练习，系统会根据你的表达给出反馈。");
+  const voiceSessionRef = useRef(null);
+  const voiceMessagesRef = useRef([]);
+  const voiceTranscriptTimerRef = useRef(null);
+  const [voiceLiveMessages, setVoiceLiveMessages] = useState([]);
+  const [voiceMicOn, setVoiceMicOn] = useState(true);
+  const [voiceError, setVoiceError] = useState("");
+  const [voicePartialText, setVoicePartialText] = useState("");
+  const [voicePartialSender, setVoicePartialSender] = useState("caller");
+  const [voiceSuggestionLoading, setVoiceSuggestionLoading] = useState(false);
+  const [voiceSummary, setVoiceSummary] = useState(null);
+  const [voiceLastScore, setVoiceLastScore] = useState(null);
+  const [voiceMicLevel, setVoiceMicLevel] = useState(0);
+  const [voiceAiSpeaking, setVoiceAiSpeaking] = useState(false);
+  const [voiceWaiting, setVoiceWaiting] = useState(false);
+  const [voiceInputDevices, setVoiceInputDevices] = useState([]);
+  const [voiceSelectedInputId, setVoiceSelectedInputId] = useState("");
+  const [voiceMicDiagnostic, setVoiceMicDiagnostic] = useState("");
+  const [voiceSocialScores, setVoiceSocialScores] = useState({
+    clarity: 0,
+    relevance: 0,
+    initiative: 0,
+  });
+
+  function simplifyVoiceText(text) {
+    return String(text || "")
+      .replace(/[，。！？,.!?~\s]/g, "")
+      .trim();
+  }
+
+  function isRepeatOfRecentUser(text, messages = voiceMessagesRef.current) {
+    const current = simplifyVoiceText(text);
+    if (!current) return false;
+
+    return messages
+      .slice(-4)
+      .some((item) => {
+        if (item.sender !== "me") return false;
+        const userText = simplifyVoiceText(item.text);
+        if (!userText) return false;
+        return current === userText || current.includes(userText) || userText.includes(current);
+      });
+  }
+
+  function formatVoiceError(message) {
+    const text = String(message || "");
+
+    if (text.includes("4028") || text.includes("Insufficient coze credits balance")) {
+      return "扣子实时语音额度不足，暂时无法接通语音通话。请在扣子控制台等待额度刷新，或升级/充值后再试。";
+    }
+
+    if (text.includes("4052") || text.includes("s2s feature is not enabled")) {
+      return "当前扣子账号没有开通实时语音 s2s 能力，请在扣子控制台开通对应能力后再试。";
+    }
+
+    if (text.includes("4100") || text.includes("authentication is invalid")) {
+      return "扣子鉴权失败，请检查 COZE_ACCESS_TOKEN 是否是有效的个人访问令牌，并确认它有调用该智能体的权限。";
+    }
+
+    return text || "实时语音连接出错，请稍后再试。";
+  }
+
+  function commitVoiceTranscript(text) {
+    const finalText = String(text || "").trim();
+    if (!finalText) return;
+
+    pushVoiceMessage({ sender: "me", text: finalText });
+    setVoiceInput("");
+    setVoicePartialText("");
+    setVoiceWaiting(true);
+    evaluateVoiceTurn(finalText);
+  }
+
+  function scheduleVoiceTranscriptCommit(text) {
+    window.clearTimeout(voiceTranscriptTimerRef.current);
+    voiceTranscriptTimerRef.current = window.setTimeout(() => {
+      commitVoiceTranscript(text);
+    }, 900);
+  }
 
   const [storyId, setStoryId] = useState(1);
   const [selectedOption, setSelectedOption] = useState("");
@@ -304,29 +386,306 @@ export default function AISocialSkillsPlatform() {
   }
 }
 
+  function pushVoiceMessage(message) {
+    if (!message?.text?.trim()) return;
+
+    const text = message.text.trim();
+    const current = voiceMessagesRef.current;
+    const last = current[current.length - 1];
+    if (last?.sender === message.sender && last?.text === text) return;
+    if (message.sender === "caller" && isRepeatOfRecentUser(text, current)) return;
+
+    const next = [...current, { sender: message.sender, text }];
+    voiceMessagesRef.current = next;
+    setVoiceLiveMessages(next);
+  }
+
+  async function refreshVoiceInputDevices() {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      setVoiceMicDiagnostic("当前浏览器不支持列出麦克风设备。");
+      return [];
+    }
+
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const inputs = devices.filter((device) => device.kind === "audioinput");
+    setVoiceInputDevices(inputs);
+
+    return inputs;
+  }
+
+  async function changeVoiceInputDevice(deviceId) {
+    setVoiceSelectedInputId(deviceId);
+    setVoiceMicDiagnostic("");
+
+    if (voiceConnected) {
+      await voiceSessionRef.current?.setAudioInputDevice?.(deviceId);
+    }
+  }
+
+  async function evaluateVoiceTurn(text) {
+    if (!text.trim()) return;
+
+    setVoiceFeedback("正在分析这一句的社交表达...");
+
+    try {
+      const res = await fetch(`${API_BASE}/api/voice/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sceneTitle: currentVoice.title,
+          sceneRole: currentVoice.caller,
+          sceneHint: currentVoice.hint,
+          userReply: text,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail || data?.error || "反馈失败");
+
+      setVoiceLastScore(data.score ?? null);
+      setVoiceSocialScores({
+        clarity: data.clarity ?? voiceSocialScores.clarity,
+        relevance: data.relevance ?? voiceSocialScores.relevance,
+        initiative: data.initiative ?? voiceSocialScores.initiative,
+      });
+      setVoiceFeedback(`${data.feedback || "表达基本清楚。"} 示例：${data.example || text}`);
+    } catch (error) {
+      setVoiceFeedback(`这一句已经记录。反馈生成失败：${error.message}`);
+    }
+  }
+
+  async function summarizeVoiceCall(messagesForSummary = voiceMessagesRef.current) {
+    if (!messagesForSummary.length) return;
+
+    setVoiceFeedback("正在生成本次通话纪要...");
+
+    try {
+      const res = await fetch(`${API_BASE}/api/voice/summary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sceneTitle: currentVoice.title,
+          sceneRole: currentVoice.caller,
+          sceneHint: currentVoice.hint,
+          messages: messagesForSummary,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail || data?.error || "总结失败");
+
+      setVoiceSummary(data);
+      setVoiceLastScore(data.score ?? voiceLastScore);
+      setVoiceSocialScores({
+        clarity: data.clarity ?? voiceSocialScores.clarity,
+        relevance: data.relevance ?? voiceSocialScores.relevance,
+        initiative: data.initiative ?? voiceSocialScores.initiative,
+      });
+      setVoiceFeedback(`${data.summary || "本次通话已结束。"} ${data.nextStep ? `下一步：${data.nextStep}` : ""}`);
+      if (typeof data.score === "number") {
+        setHistory((prev) => {
+          const filtered = prev.filter((item) => item.name !== "语音通话");
+          return [...filtered, { name: "语音通话", score: data.score }];
+        });
+      }
+    } catch (error) {
+      setVoiceFeedback(`通话已结束，但纪要生成失败：${error.message}`);
+    }
+  }
+
+  async function generateVoiceSuggestion() {
+    if (voiceSuggestionLoading) return;
+
+    setVoiceSuggestionLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/voice/suggestion`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sceneTitle: currentVoice.title,
+          sceneRole: currentVoice.caller,
+          sceneHint: currentVoice.hint,
+          messages: voiceMessagesRef.current,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail || data?.error || "示范生成失败");
+
+      setVoiceInput(data.suggestion || currentVoice.sample);
+    } catch (error) {
+      setVoiceInput(`出错了：${error.message}`);
+    } finally {
+      setVoiceSuggestionLoading(false);
+    }
+  }
+
   function switchVoiceScenario(item) {
+    voiceSessionRef.current?.disconnect();
+    voiceSessionRef.current = null;
+    window.clearTimeout(voiceTranscriptTimerRef.current);
+
     setVoiceScenarioId(item.id);
     setVoiceMessages([{ sender: "caller", text: item.opening }]);
+    voiceMessagesRef.current = [];
+    setVoiceLiveMessages([]);
     setVoiceInput("");
     setVoiceConnected(false);
+    setVoiceMicOn(true);
+    setVoiceError("");
+    setVoicePartialText("");
+    setVoicePartialSender("caller");
+    setVoiceSummary(null);
+    setVoiceLastScore(null);
+    setVoiceSocialScores({ clarity: 0, relevance: 0, initiative: 0 });
+    setVoiceAiSpeaking(false);
+    setVoiceWaiting(false);
+    setVoiceMicDiagnostic("");
+    setVoiceMicLevel(0);
     setVoiceStatus("等待接听");
-    setVoiceFeedback("接听后进行一轮通话练习，系统会根据你的表达给出反馈。")
+    setVoiceFeedback("接听后进行一轮通话练习，系统会根据你的表达给出反馈。");
   }
 
-  function startVoiceCall() {
+  async function startVoiceCall() {
+    if (voiceConnected) return;
+
+    setVoiceError("");
+    setVoiceSummary(null);
+    setVoiceLastScore(null);
+    setVoiceSocialScores({ clarity: 0, relevance: 0, initiative: 0 });
+    setVoicePartialText("");
+    setVoicePartialSender("caller");
+    setVoiceAiSpeaking(false);
+    setVoiceWaiting(true);
+    setVoiceStatus("正在连接实时语音...");
     setVoiceConnected(true);
-    setVoiceStatus(`通话中 · ${currentVoice.caller}`);
-    setVoiceMessages([{ sender: "caller", text: currentVoice.opening }]);
+    voiceMessagesRef.current = [{ sender: "caller", text: currentVoice.opening }];
+    setVoiceLiveMessages(voiceMessagesRef.current);
+
+    try {
+      await refreshVoiceInputDevices();
+      const inputDeviceId = voiceSelectedInputId || "";
+      const session = await createCozeVoiceSession({
+        audioInputDeviceId: inputDeviceId,
+        prologueContent: currentVoice.opening,
+        onStatus: setVoiceStatus,
+        onTranscript: (message) => {
+          setVoicePartialText(message.text);
+          setVoicePartialSender("me");
+          setVoiceStatus(message.isFinal ? "已识别，等待 AI 回应..." : "正在识别你的话...");
+
+          if (message.isFinal) {
+            window.clearTimeout(voiceTranscriptTimerRef.current);
+            commitVoiceTranscript(message.text);
+          } else {
+            scheduleVoiceTranscriptCommit(message.text);
+          }
+        },
+        onAssistantText: (message) => {
+          if (isRepeatOfRecentUser(message.text)) return;
+
+          setVoiceStatus(message.isFinal ? "可以继续说话" : "AI 正在回应...");
+          setVoiceAiSpeaking(!message.isFinal);
+
+          if (message.isFinal) {
+            pushVoiceMessage({ sender: "caller", text: message.text });
+            setVoicePartialText("");
+            setVoicePartialSender("caller");
+            setVoiceWaiting(false);
+            setVoiceAiSpeaking(false);
+          } else {
+            setVoicePartialText(message.text);
+            setVoicePartialSender("caller");
+          }
+        },
+        onMessage: (message) => {
+          pushVoiceMessage(message);
+        },
+        onError: (message) => {
+          const friendlyMessage = formatVoiceError(message);
+          setVoiceError(friendlyMessage);
+          setVoiceStatus(`出错了：${friendlyMessage}`);
+          setVoiceWaiting(false);
+          setVoiceAiSpeaking(false);
+        },
+        onEvent: (_, event) => {
+          if (event?.uiSignal === "user_speaking") {
+            setVoiceMicLevel(72);
+            setVoiceWaiting(false);
+          }
+          if (event?.uiSignal === "user_stopped") {
+            setVoiceMicLevel(12);
+            setVoiceWaiting(true);
+          }
+          if (event?.uiSignal === "ai_speaking") {
+            setVoiceAiSpeaking(true);
+            setVoiceWaiting(false);
+          }
+          if (event?.uiSignal === "ai_stopped") {
+            setVoiceAiSpeaking(false);
+            setVoiceWaiting(false);
+          }
+        },
+      });
+
+      voiceSessionRef.current = session;
+      setVoiceMicLevel(12);
+      setVoiceStatus(`通话中 · ${currentVoice.caller}`);
+    } catch (error) {
+      const friendlyMessage = formatVoiceError(error.message);
+      setVoiceConnected(false);
+      setVoiceStatus("等待接听");
+      setVoiceError(friendlyMessage);
+      setVoiceWaiting(false);
+      setVoiceAiSpeaking(false);
+      setVoiceMicLevel(0);
+    }
   }
 
-  function endVoiceCall() {
+  async function endVoiceCall() {
+    voiceSessionRef.current?.disconnect();
+    voiceSessionRef.current = null;
+    window.clearTimeout(voiceTranscriptTimerRef.current);
+    if (voicePartialSender === "me" && voicePartialText.trim()) {
+      commitVoiceTranscript(voicePartialText);
+    }
+
     setVoiceConnected(false);
+    setVoiceMicOn(true);
+    setVoicePartialText("");
+    setVoicePartialSender("caller");
+    setVoiceWaiting(false);
+    setVoiceAiSpeaking(false);
+    setVoiceMicLevel(0);
     setVoiceStatus("通话已结束");
+    await summarizeVoiceCall();
   }
 
-  function sendVoiceReply() {
+  function interruptAiVoice() {
+    voiceSessionRef.current?.interrupt();
+  }
+
+  function toggleVoiceMic() {
+    const next = !voiceMicOn;
+    setVoiceMicOn(next);
+    voiceSessionRef.current?.setMicrophone(next);
+    if (next) {
+      setVoiceMicLevel(voiceConnected ? 12 : 0);
+    } else {
+      setVoiceMicLevel(0);
+    }
+  }
+
+  async function sendVoiceReply() {
     const text = voiceInput.trim();
     if (!text || !voiceConnected) return;
+
+    if (voiceSessionRef.current?.sendText) {
+      pushVoiceMessage({ sender: "me", text });
+      setVoiceInput("");
+      setVoiceStatus("已发送文字回应，等待 AI 回应...");
+      setVoiceWaiting(true);
+      await evaluateVoiceTurn(text);
+      await voiceSessionRef.current.sendText(text);
+      return;
+    }
 
     let callerReply = "好的，我知道了。";
     let feedback = "表达基本清楚，可以再更完整一点。";
@@ -395,6 +754,11 @@ export default function AISocialSkillsPlatform() {
   }
 
   const avg = Math.round(history.reduce((a, b) => a + b.score, 0) / history.length);
+  const voiceMetricItems = [
+    { label: "表达清晰", value: voiceSocialScores.clarity },
+    { label: "贴合情境", value: voiceSocialScores.relevance },
+    { label: "主动延续", value: voiceSocialScores.initiative },
+  ];
 
   const styles = {
     page: { minHeight: "100vh", background: "#f5f7fb", color: "#1f2a44", fontFamily: '"Microsoft YaHei", "PingFang SC", sans-serif' },
@@ -410,10 +774,11 @@ export default function AISocialSkillsPlatform() {
     secondaryBtn: { border: "1px solid #d9e2f0", background: "#fff", color: "#4f5f7f", borderRadius: "12px", padding: "11px 16px", fontWeight: 700, cursor: "pointer" },
     dangerBtn: { border: "1px solid #ffd5d8", background: "#fff2f3", color: "#d14b5a", borderRadius: "12px", padding: "11px 16px", fontWeight: 700, cursor: "pointer" },
     input: { width: "100%", borderRadius: "16px", border: "1px solid #d9e2f0", padding: "14px", boxSizing: "border-box", resize: "vertical", fontSize: "15px", outline: "none" },
-    bubble: (mine) => ({ alignSelf: mine ? "flex-end" : "flex-start", background: mine ? "#4f7cff" : "#f2f5fa", color: mine ? "#fff" : "#24314f", borderRadius: mine ? "18px 18px 4px 18px" : "18px 18px 18px 4px", padding: "12px 14px", maxWidth: "78%", lineHeight: 1.65, marginBottom: "10px" }),
+    bubble: (mine) => ({ alignSelf: mine ? "flex-end" : "flex-start", marginLeft: mine ? "auto" : 0, marginRight: mine ? 0 : "auto", background: mine ? "#4f7cff" : "#f2f5fa", color: mine ? "#fff" : "#24314f", borderRadius: mine ? "18px 18px 4px 18px" : "18px 18px 18px 4px", padding: "12px 14px", maxWidth: "78%", lineHeight: 1.65, marginBottom: "10px" }),
     sceneBtn: (active) => ({ width: "100%", textAlign: "left", background: active ? "#eef4ff" : "#fff", border: active ? "2px solid #4f7cff" : "1px solid #e2e8f2", borderRadius: "16px", padding: "14px", marginBottom: "10px", cursor: "pointer" }),
     optionBtn: (active) => ({ width: "100%", textAlign: "left", background: active ? "#eef4ff" : "#fff", border: active ? "2px solid #4f7cff" : "1px solid #e2e8f2", borderRadius: "16px", padding: "14px", marginBottom: "12px", cursor: "pointer", lineHeight: 1.7 }),
     badge: { display: "inline-block", padding: "6px 10px", background: "#eef4ff", color: "#4567da", borderRadius: "999px", fontSize: "12px", fontWeight: 700, marginRight: "8px" },
+    twoLineText: { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
   };
 
   return (
@@ -437,10 +802,7 @@ export default function AISocialSkillsPlatform() {
           <>
             <div style={styles.hero}>
               <div style={{ fontSize: "14px", opacity: 0.9, marginBottom: "10px" }}>更自然地说，更安心地回应</div>
-              <h1 style={{ margin: 0, fontSize: "42px", lineHeight: 1.15 }}>把日常沟通练得更轻松一点</h1>
-              <p style={{ margin: "14px 0 0 0", lineHeight: 1.9, fontSize: "17px", maxWidth: "900px" }}>
-                你可以在这里练习聊天开场、加入对话、请求帮助、电话沟通、理解他人情绪，并把常用表达同步到外部聊天平台接口。
-              </p>
+              <h1 style={{ margin: 0, fontSize: "38px", lineHeight: 1.15 }}>把日常沟通练得更轻松一点</h1>
               <div style={{ display: "flex", gap: "12px", marginTop: "18px", flexWrap: "wrap" }}>
                 <button style={styles.primaryBtn} onClick={() => setActiveTab("train")}>进入训练模块</button>
                 <button style={styles.secondaryBtn} onClick={() => setActiveTab("assist")}>进入辅助模块</button>
@@ -449,10 +811,10 @@ export default function AISocialSkillsPlatform() {
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "18px", marginBottom: "18px" }}>
-              <div style={styles.card}><div style={styles.sectionTitle}>训练模块</div><h3 style={{ marginTop: 0 }}>文本社交训练</h3><p style={{ color: "#60708f", lineHeight: 1.8 }}>围绕打招呼、加入聊天、请求帮助等场景，进行实时对话训练和反馈。</p></div>
-              <div style={styles.card}><div style={styles.sectionTitle}>辅助模块</div><h3 style={{ marginTop: 0 }}>聊天表达辅助</h3><p style={{ color: "#60708f", lineHeight: 1.8 }}>把不会说的话改写成更自然、更礼貌、更简洁的版本。</p></div>
-              <div style={styles.card}><div style={styles.sectionTitle}>语音通话</div><h3 style={{ marginTop: 0 }}>电话场景模拟</h3><p style={{ color: "#60708f", lineHeight: 1.8 }}>练习接听、说明情况、回应邀请和结束通话。</p></div>
-              <div style={styles.card}><div style={styles.sectionTitle}>共情模拟</div><h3 style={{ marginTop: 0 }}>理解情绪并回应</h3><p style={{ color: "#60708f", lineHeight: 1.8 }}>在别人失落、受挫、疲惫时，练习更有共情感的表达方式。</p></div>
+              <div style={styles.card}><div style={styles.sectionTitle}>训练模块</div><h3 style={{ marginTop: 0 }}>文本社交训练</h3></div>
+              <div style={styles.card}><div style={styles.sectionTitle}>辅助模块</div><h3 style={{ marginTop: 0 }}>聊天表达辅助</h3></div>
+              <div style={styles.card}><div style={styles.sectionTitle}>语音通话</div><h3 style={{ marginTop: 0 }}>电话场景模拟</h3></div>
+              <div style={styles.card}><div style={styles.sectionTitle}>共情模拟</div><h3 style={{ marginTop: 0 }}>理解情绪并回应</h3></div>
             </div>
 
             <div style={styles.card}>
@@ -462,9 +824,6 @@ export default function AISocialSkillsPlatform() {
                 <span style={styles.badge}>聊天助手</span>
                 <span style={styles.badge}>消息回调</span>
               </div>
-              <p style={{ color: "#60708f", lineHeight: 1.9, margin: 0 }}>
-                当前已预留外部聊天平台接入思路，可对接企业微信、飞书、Telegram Bot、Discord Bot 等开放 API 平台；若要接入真实聊天软件，需要对应平台的开发者权限、密钥和回调地址配置。
-              </p>
             </div>
           </>
         )}
@@ -566,10 +925,63 @@ export default function AISocialSkillsPlatform() {
                 <div style={styles.sectionTitle}>通话状态</div>
                 <div style={{ fontSize: "28px", fontWeight: 800, marginBottom: "8px" }}>{currentVoice.caller}</div>
                 <div style={{ color: "#60708f", marginBottom: "14px" }}>{voiceStatus}</div>
+                <div style={{ display: "grid", gap: "10px", marginBottom: "14px" }}>
+                  <label style={{ display: "grid", gap: "6px", color: "#7584a3", fontSize: "13px" }}>
+                    麦克风设备
+                    <select
+                      value={voiceSelectedInputId}
+                      onChange={(event) => changeVoiceInputDevice(event.target.value)}
+                      onFocus={refreshVoiceInputDevices}
+                      style={{ width: "100%", border: "1px solid #d9e2f0", borderRadius: "12px", padding: "10px", color: "#1f2a44", background: "#fff" }}
+                    >
+                      <option value="">默认麦克风</option>
+                      {voiceInputDevices.map((device, index) => (
+                        <option key={device.deviceId || index} value={device.deviceId}>
+                          {device.label || `麦克风 ${index + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", color: "#7584a3", fontSize: "13px", marginBottom: "6px" }}>
+                      <span>语音检测</span>
+                      <span>{voiceMicOn ? (voiceMicLevel >= 60 ? "正在听你说话" : voiceConnected ? "待机" : "未接通") : "已关闭"}</span>
+                    </div>
+                    <div style={{ height: "10px", background: "#eef2f8", borderRadius: "999px", overflow: "hidden" }}>
+                      <div style={{ width: `${voiceMicOn ? voiceMicLevel : 0}%`, height: "100%", background: "#4f7cff", borderRadius: "999px", transition: "width 260ms ease" }} />
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", color: "#7584a3", fontSize: "13px", marginBottom: "6px" }}>
+                      <span>AI 状态</span>
+                      <span>{voiceAiSpeaking ? "正在说话" : voiceWaiting ? "等待回应" : voiceConnected ? "可继续说" : "未接通"}</span>
+                    </div>
+                    <div style={{ height: "10px", background: "#eef2f8", borderRadius: "999px", overflow: "hidden" }}>
+                      <div style={{ width: voiceAiSpeaking ? "100%" : voiceWaiting ? "55%" : voiceConnected ? "18%" : "0%", height: "100%", background: voiceAiSpeaking ? "#22a06b" : "#7f8cab", borderRadius: "999px", transition: "width 200ms ease" }} />
+                    </div>
+                  </div>
+                  {voiceMicDiagnostic && (
+                    <div style={{ color: "#d14b5a", fontSize: "13px", lineHeight: 1.6 }}>
+                      {voiceMicDiagnostic}
+                    </div>
+                  )}
+                </div>
                 <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                  <button style={styles.primaryBtn} onClick={startVoiceCall}>接听</button>
-                  <button style={styles.dangerBtn} onClick={endVoiceCall}>挂断</button>
-                  <button style={styles.secondaryBtn} onClick={() => setVoiceInput(currentVoice.sample)}>示范一句</button>
+                  <button style={styles.primaryBtn} onClick={startVoiceCall}>
+                    {voiceConnected ? "通话中" : "接听"}
+                  </button>
+                  <button style={styles.dangerBtn} onClick={endVoiceCall}>
+                    挂断
+                  </button>
+                  <button style={styles.secondaryBtn} onClick={toggleVoiceMic}>
+                    {voiceMicOn ? "关闭麦克风" : "打开麦克风"}
+                  </button>
+                  <button style={styles.secondaryBtn} onClick={interruptAiVoice}>
+                    打断 AI
+                  </button>
+                  <button style={styles.secondaryBtn} onClick={generateVoiceSuggestion}>
+                    {voiceSuggestionLoading ? "生成中..." : "AI示范一句"}
+                  </button>
                 </div>
               </div>
             </div>
@@ -578,10 +990,20 @@ export default function AISocialSkillsPlatform() {
               <div style={styles.card}>
                 <div style={styles.sectionTitle}>通话模拟</div>
                 <div style={{ background: "#fbfcff", border: "1px solid #ebf0f7", borderRadius: "18px", padding: "16px", minHeight: "280px", display: "flex", flexDirection: "column" }}>
-                  {voiceMessages.map((msg, idx) => <div key={idx} style={styles.bubble(msg.sender === "me")}>{msg.text}</div>)}
+                  {(voiceLiveMessages.length ? voiceLiveMessages : voiceMessages).map((msg, idx) => (
+                    <div key={idx} style={styles.bubble(msg.sender === "me")}>
+                      {msg.text}
+                    </div>
+                  ))}
+                  {voicePartialText && (
+                    <div style={{ ...styles.bubble(voicePartialSender === "me"), opacity: 0.75 }}>
+                      {voicePartialText}
+                    </div>
+                  )}
                 </div>
+
                 <div style={{ marginTop: "14px" }}>
-                  <textarea value={voiceInput} onChange={(e) => setVoiceInput(e.target.value)} placeholder="输入你在通话中会说的话……" style={{ ...styles.input, minHeight: "90px" }} />
+                  <textarea value={voiceInput} onChange={(e) => setVoiceInput(e.target.value)} placeholder="实时语音通话时可以直接说话，这里保留文字练习输入……" style={{ ...styles.input, minHeight: "90px" }} />
                   <div style={{ display: "flex", gap: "10px", marginTop: "12px" }}>
                     <button style={styles.primaryBtn} onClick={sendVoiceReply}>发送通话回应</button>
                   </div>
@@ -590,12 +1012,48 @@ export default function AISocialSkillsPlatform() {
 
               <div style={styles.card}>
                 <div style={styles.sectionTitle}>通话反馈</div>
-                <div style={{ background: "#eef4ff", borderRadius: "14px", padding: "16px", lineHeight: 1.8 }}>{voiceFeedback}</div>
+                {voiceLastScore !== null && (
+                  <div style={{ marginBottom: "12px", fontSize: "26px", fontWeight: 800 }}>
+                    本轮参考：{voiceLastScore} 分
+                  </div>
+                )}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px", marginBottom: "12px" }}>
+                  {voiceMetricItems.map((item) => (
+                    <div key={item.label} style={{ background: "#f7f9fd", borderRadius: "8px", padding: "12px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", color: "#7584a3", fontSize: "13px", marginBottom: "8px" }}>
+                        <span>{item.label}</span>
+                        <strong style={{ color: "#1f2a44" }}>{item.value || 0}</strong>
+                      </div>
+                      <div style={{ height: "8px", background: "#e8edf5", borderRadius: "999px", overflow: "hidden" }}>
+                        <div style={{ width: `${Math.max(0, Math.min(100, item.value || 0))}%`, height: "100%", background: "#4f7cff", borderRadius: "999px", transition: "width 240ms ease" }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {voiceSummary ? (
+                  <div style={{ display: "grid", gap: "10px" }}>
+                    <div style={{ background: "#eef4ff", borderRadius: "14px", padding: "14px", lineHeight: 1.8 }}>
+                      <strong>本次纪要：</strong>{voiceSummary.summary}
+                    </div>
+                    <div style={{ background: "#f7f9fd", borderRadius: "14px", padding: "14px", lineHeight: 1.8 }}>
+                      <strong>做得好的地方：</strong>{voiceSummary.strength}
+                    </div>
+                    <div style={{ background: "#f7f9fd", borderRadius: "14px", padding: "14px", lineHeight: 1.8 }}>
+                      <strong>下一步练习：</strong>{voiceSummary.nextStep}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ background: "#eef4ff", borderRadius: "14px", padding: "16px", lineHeight: 1.8 }}>{voiceFeedback}</div>
+                )}
+                {voiceError && (
+                  <div style={{ marginTop: "12px", color: "#d14b5a", lineHeight: 1.7 }}>
+                    {voiceError}
+                  </div>
+                )}
               </div>
             </div>
           </div>
         )}
-
         {activeTab === "story" && (
           <div style={styles.grid}>
             <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
@@ -686,3 +1144,4 @@ export default function AISocialSkillsPlatform() {
     </div>
   );
 }
+
