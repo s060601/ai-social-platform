@@ -786,7 +786,7 @@ export default function AISocialSkillsPlatform() {
       <div style={styles.shell}>
         <div style={styles.topbar}>
           <div>
-            <div style={{ fontWeight: 800, fontSize: "20px" }}>沟通练习</div>
+            <div style={{ fontWeight: 800, fontSize: "20px" }}>语依</div>
             <div style={{ color: "#7584a3", fontSize: "13px", marginTop: "4px" }}>训练模块 · 辅助模块 · 语音通话 · 社交故事 · 共情模拟</div>
           </div>
           <div style={styles.navWrap}>
