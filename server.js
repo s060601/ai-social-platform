@@ -4,6 +4,11 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import OpenAI from "openai";
+import jwt from "jsonwebtoken";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 dotenv.config();
 
@@ -12,6 +17,91 @@ app.use(cors());
 app.use(express.json());
 
 const port = process.env.PORT || 3001;
+const JWT_SECRET = process.env.JWT_SECRET || "yuyi-dev-secret";
+
+// ── User store (persistent JSON file) ───────────────────────────────────────────
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const USERS_FILE = path.join(__dirname, "users.json");
+
+function hashPassword(password, salt) {
+  return crypto.scryptSync(password, salt, 64).toString("hex");
+}
+function verifyPassword(password, salt, hash) {
+  const test = hashPassword(password, salt);
+  const a = Buffer.from(test, "hex");
+  const b = Buffer.from(hash, "hex");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+function makeUser({ id, username, password, role, name }) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  return { id, username, salt, passwordHash: hashPassword(password, salt), role, name };
+}
+
+let USERS = [];
+function loadUsers() {
+  try {
+    USERS = JSON.parse(fs.readFileSync(USERS_FILE, "utf-8"));
+    // Migrate any legacy plaintext records
+    let migrated = false;
+    USERS = USERS.map((u) => {
+      if (u.password && !u.passwordHash) {
+        migrated = true;
+        const salt = crypto.randomBytes(16).toString("hex");
+        return { id: u.id, username: u.username, salt, passwordHash: hashPassword(u.password, salt), role: u.role, name: u.name };
+      }
+      return u;
+    });
+    if (migrated) saveUsers();
+  } catch {
+    USERS = [
+      makeUser({ id: 1, username: "student001", password: "pass123", role: "student", name: "小明" }),
+      makeUser({ id: 2, username: "teacher001", password: "pass123", role: "teacher", name: "王老师" }),
+      makeUser({ id: 3, username: "parent001",  password: "pass123", role: "parent",  name: "小明家长" }),
+    ];
+    saveUsers();
+  }
+}
+function saveUsers() {
+  fs.writeFileSync(USERS_FILE, JSON.stringify(USERS, null, 2), "utf-8");
+}
+loadUsers();
+
+// ── CAPTCHA store (in-memory, 5 min TTL, one-time use) ─────────────────────────────
+const EMOJI_POOL = [
+  { emoji: "🐱", label: "小猫" }, { emoji: "🐶", label: "小狗" }, { emoji: "🐰", label: "小兔" },
+  { emoji: "🐼", label: "熊猫" }, { emoji: "🦊", label: "狐狸" }, { emoji: "🐸", label: "青蛙" },
+  { emoji: "🐧", label: "企鹅" }, { emoji: "🦁", label: "狮子" }, { emoji: "🐯", label: "老虎" },
+  { emoji: "🦄", label: "独角兽" }, { emoji: "🐮", label: "小牛" }, { emoji: "🐷", label: "小猪" },
+  { emoji: "🐙", label: "章鱼" }, { emoji: "🦋", label: "蝴蝶" }, { emoji: "🐻", label: "小熊" },
+  { emoji: "🐠", label: "小鱼" }, { emoji: "🐨", label: "考拉" }, { emoji: "🦔", label: "刺猬" },
+];
+function shuffleArr(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+const captchas = new Map();
+function issueCaptcha() {
+  const pool = shuffleArr(EMOJI_POOL).slice(0, 9);
+  const target = pool[Math.floor(Math.random() * 9)];
+  const id = crypto.randomBytes(8).toString("hex");
+  captchas.set(id, { answer: target.emoji, expires: Date.now() + 5 * 60 * 1000 });
+  return { id, emojis: pool, target };
+}
+function consumeCaptcha(id, answer) {
+  const item = captchas.get(id);
+  if (!item) return false;
+  captchas.delete(id);
+  if (Date.now() > item.expires) return false;
+  return String(answer) === item.answer;
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of captchas) if (now > v.expires) captchas.delete(k);
+}, 60 * 1000).unref?.();
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -455,6 +545,275 @@ app.post("/api/suggest", async (req, res) => {
       error: "示范生成失败",
       detail: error?.message || "unknown error",
     });
+  }
+});
+
+// ── Auth endpoints ─────────────────────────────────────────────────────────
+
+function signToken(user) {
+  return jwt.sign(
+    { id: user.id, username: user.username, role: user.role, name: user.name },
+    JWT_SECRET,
+    { expiresIn: "7d" },
+  );
+}
+
+app.get("/api/auth/captcha", (req, res) => {
+  res.json(issueCaptcha());
+});
+
+app.post("/api/auth/login", (req, res) => {
+  const { username, password, captchaId, captchaAnswer } = req.body || {};
+  if (!username || !password) {
+    return res.status(400).json({ error: "请输入用户名和密码" });
+  }
+  if (!captchaId || captchaAnswer === undefined || captchaAnswer === "") {
+    return res.status(400).json({ error: "请完成人机验证", code: "captcha_required" });
+  }
+  if (!consumeCaptcha(captchaId, captchaAnswer)) {
+    return res.status(400).json({ error: "验证码错误或已过期，请重新获取", code: "captcha_invalid" });
+  }
+  const user = USERS.find((u) => u.username === username);
+  if (!user || !verifyPassword(password, user.salt, user.passwordHash)) {
+    return res.status(401).json({ error: "用户名或密码错误" });
+  }
+  res.json({ token: signToken(user), role: user.role, name: user.name });
+});
+
+app.post("/api/auth/register", (req, res) => {
+  const { username, password, name, role, captchaId, captchaAnswer } = req.body || {};
+  if (!username || !password || !name || !role) {
+    return res.status(400).json({ error: "请填写完整的注册信息" });
+  }
+  if (!/^[a-zA-Z0-9_]{4,20}$/.test(username)) {
+    return res.status(400).json({ error: "用户名为 4-20 位字母、数字或下划线" });
+  }
+  if (password.length < 6) {
+    return res.status(400).json({ error: "密码至少 6 位" });
+  }
+  if (!["student", "teacher", "parent"].includes(role)) {
+    return res.status(400).json({ error: "角色不合法" });
+  }
+  if (!captchaId || captchaAnswer === undefined || captchaAnswer === "") {
+    return res.status(400).json({ error: "请完成人机验证", code: "captcha_required" });
+  }
+  if (!consumeCaptcha(captchaId, captchaAnswer)) {
+    return res.status(400).json({ error: "验证码错误或已过期，请重新获取", code: "captcha_invalid" });
+  }
+  if (USERS.some((u) => u.username === username)) {
+    return res.status(409).json({ error: "该用户名已被注册" });
+  }
+  const nextId = USERS.reduce((m, u) => Math.max(m, u.id), 0) + 1;
+  const user = makeUser({ id: nextId, username, password, role, name });
+  USERS.push(user);
+  saveUsers();
+  res.json({ token: signToken(user), role: user.role, name: user.name });
+});
+
+app.get("/api/auth/me", (req, res) => {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "未登录" });
+  }
+  try {
+    const payload = jwt.verify(auth.slice(7), JWT_SECRET);
+    res.json({ id: payload.id, username: payload.username, role: payload.role, name: payload.name });
+  } catch {
+    res.status(401).json({ error: "token 无效或已过期" });
+  }
+});
+
+// ── Teacher endpoints ──────────────────────────────────────────────────────
+
+app.get("/api/teacher/classes", (req, res) => {
+  res.json([
+    { id: 1, name: "星光班", count: 8, avgScore: 81 },
+    { id: 2, name: "成长班", count: 6, avgScore: 76 },
+    { id: 3, name: "实践班", count: 5, avgScore: 85 },
+  ]);
+});
+
+app.get("/api/teacher/students/:classId", (req, res) => {
+  const map = {
+    1: [
+      { id: 101, name: "小明", lastSession: "2026-05-24", totalSessions: 12, avgScore: 83, trend: "+4" },
+      { id: 102, name: "小华", lastSession: "2026-05-23", totalSessions: 9, avgScore: 79, trend: "+2" },
+      { id: 103, name: "小燕", lastSession: "2026-05-22", totalSessions: 15, avgScore: 88, trend: "+6" },
+      { id: 104, name: "小峰", lastSession: "2026-05-21", totalSessions: 7, avgScore: 74, trend: "-1" },
+    ],
+    2: [
+      { id: 105, name: "小雨", lastSession: "2026-05-24", totalSessions: 10, avgScore: 77, trend: "+3" },
+      { id: 106, name: "小林", lastSession: "2026-05-20", totalSessions: 8, avgScore: 72, trend: "0" },
+    ],
+    3: [
+      { id: 107, name: "小涛", lastSession: "2026-05-23", totalSessions: 14, avgScore: 86, trend: "+5" },
+      { id: 108, name: "小蕾", lastSession: "2026-05-22", totalSessions: 11, avgScore: 84, trend: "+2" },
+    ],
+  };
+  const students = map[req.params.classId];
+  if (!students) return res.status(404).json({ error: "class not found" });
+  res.json(students);
+});
+
+app.get("/api/teacher/students/:studentId/report", (req, res) => {
+  const sessions = {
+    101: [
+      { date: "2026-05-24", module: "训练模块", scene: "打招呼", score: 86, comment: "开头自然，主动提问，整体流畅" },
+      { date: "2026-05-22", module: "语音通话", scene: "老师来电", score: 80, comment: "回应较慢，但内容完整" },
+      { date: "2026-05-20", module: "共情模拟", scene: "朋友考试失利", score: 85, comment: "能识别负面情绪，回应有温度" },
+    ],
+    102: [
+      { date: "2026-05-23", module: "训练模块", scene: "请求帮助", score: 78, comment: "表达清楚，但略显紧张" },
+      { date: "2026-05-21", module: "社交故事", scene: "加入聊天", score: 81, comment: "选择了较优方案" },
+    ],
+  };
+  const data = sessions[req.params.studentId] || [];
+  res.json(data);
+});
+
+app.post("/api/teacher/note", async (req, res) => {
+  try {
+    const { studentName, observation, sessions } = req.body;
+    if (!observation || !observation.trim()) {
+      return res.status(400).json({ error: "missing observation" });
+    }
+
+    const sessionSummary = Array.isArray(sessions) && sessions.length
+      ? sessions.map((s) => `${s.date} ${s.module}·${s.scene} ${s.score}分：${s.comment}`).join("\n")
+      : "暂无近期会话记录";
+
+    const completion = await client.chat.completions.create({
+      model: process.env.OPENAI_MODEL,
+      messages: [
+        {
+          role: "system",
+          content:
+            "你是孤独症青少年社会技能训练的教师助手。根据教师观察和会话记录，输出结构化建议。只输出 JSON，不要 markdown。",
+        },
+        {
+          role: "user",
+          content: `学员：${studentName || "该学员"}
+教师观察：${observation}
+近期会话记录：
+${sessionSummary}
+
+请生成：
+1. suggestion：2-4 句训练建议，必须结合观察内容，具体指出下一步练习方向。
+2. homework：1-2 条家庭作业，贴合该学员情况。
+3. encouragement：1 句鼓励话语，适合教师对学员说。
+输出格式：
+{
+  "suggestion": "...",
+  "homework": "...",
+  "encouragement": "..."
+}`,
+        },
+      ],
+      temperature: 0.4,
+    });
+
+    const raw = completion.choices?.[0]?.message?.content?.trim() || "";
+    const parsed = safeParseJSON(raw);
+    res.json(parsed || {
+      suggestion: "根据近期表现，建议继续在真实场景中练习主动发起对话，并尝试多用跟进问句延续交流。",
+      homework: "每天选择一个生活场景，练习主动问一句跟进问题，并记录下来。",
+      encouragement: "你这段时间的努力大家都看在眼里，继续加油！",
+    });
+  } catch (error) {
+    console.error("/api/teacher/note error:", error);
+    res.status(500).json({ error: "note generation failed", detail: error?.message || "unknown error" });
+  }
+});
+
+// ── Parent endpoints ────────────────────────────────────────────────────────
+
+app.get("/api/parent/child/report", (req, res) => {
+  res.json({
+    childName: "小明",
+    weekStart: "2026-05-19",
+    weekEnd: "2026-05-25",
+    totalSessions: 5,
+    avgScore: 83,
+    bestModule: "共情模拟",
+    improvement: "+4",
+    modules: [
+      { name: "训练模块", sessions: 2, avgScore: 85 },
+      { name: "语音通话", sessions: 1, avgScore: 80 },
+      { name: "共情模拟", sessions: 1, avgScore: 88 },
+      { name: "社交故事", sessions: 1, avgScore: 79 },
+    ],
+  });
+});
+
+app.get("/api/parent/child/sessions", (req, res) => {
+  res.json([
+    { date: "2026-05-24", module: "训练模块", scene: "打招呼", score: 86, comment: "开头自然，主动提问，整体流畅" },
+    { date: "2026-05-23", module: "共情模拟", scene: "朋友考试失利", score: 88, comment: "能识别负面情绪，回应有温度" },
+    { date: "2026-05-22", module: "语音通话", scene: "老师来电", score: 80, comment: "回应较慢，但内容完整" },
+    { date: "2026-05-21", module: "社交故事", scene: "加入聊天", score: 79, comment: "选择了较优方案" },
+    { date: "2026-05-20", module: "训练模块", scene: "请求帮助", score: 83, comment: "表达清楚，思路连贯" },
+  ]);
+});
+
+app.post("/api/parent/practice", async (req, res) => {
+  try {
+    const { childName, weekReport, trends, latestFeedback } = req.body;
+
+    const reportSummary = weekReport
+      ? `本周训练 ${weekReport.totalSessions} 次，平均分 ${weekReport.avgScore}，最强模块：${weekReport.bestModule}，进步：${weekReport.improvement}`
+      : "本周训练数据暂无";
+
+    const trendSummary = Array.isArray(trends) && trends.length
+      ? `最近一周综合得分 ${trends[trends.length - 1]?.overall}，表达清晰 ${trends[trends.length - 1]?.clarity}，共情能力 ${trends[trends.length - 1]?.empathy}`
+      : "";
+
+    const feedbackNote = latestFeedback?.homework || "";
+
+    const completion = await client.chat.completions.create({
+      model: process.env.OPENAI_MODEL,
+      messages: [
+        {
+          role: "system",
+          content:
+            "你是孤独症青少年社会技能训练的家庭支持助手。根据孩子的训练数据为家长生成家庭练习建议。只输出 JSON，不要 markdown。活动要轻松有趣，适合亲子互动，不要增加压力。",
+        },
+        {
+          role: "user",
+          content: `孩子：${childName || "孩子"}
+训练周报：${reportSummary}
+能力趋势：${trendSummary}
+教师作业：${feedbackNote || "无"}
+
+请生成：
+1. tip：1 句家庭练习的总体提示，温馨鼓励的语气。
+2. activities：3 个家庭练习活动，每个有 title 和 desc，贴合孩子当前能力水平，适合日常生活中自然练习。
+输出格式：
+{
+  "tip": "...",
+  "activities": [
+    { "title": "...", "desc": "..." },
+    { "title": "...", "desc": "..." },
+    { "title": "...", "desc": "..." }
+  ]
+}`,
+        },
+      ],
+      temperature: 0.6,
+    });
+
+    const raw = completion.choices?.[0]?.message?.content?.trim() || "";
+    const parsed = safeParseJSON(raw);
+    res.json(parsed || {
+      tip: "每次练习控制在 10-15 分钟，保持轻松，避免纠错压力。",
+      activities: [
+        { title: "角色扮演练习", desc: "在家模拟课间聊天场景，练习主动加入话题的表达方式。" },
+        { title: "情绪卡片游戏", desc: "用表情卡片配合日常对话，练习识别和命名他人情绪。" },
+        { title: "电话礼仪练习", desc: "模拟接打电话，重点练习开头问候和礼貌结束语。" },
+      ],
+    });
+  } catch (error) {
+    console.error("/api/parent/practice error:", error);
+    res.status(500).json({ error: "practice plan generation failed", detail: error?.message || "unknown error" });
   }
 });
 

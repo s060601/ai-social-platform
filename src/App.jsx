@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { API_BASE } from "./config";
-import { createCozeVoiceSession } from "./cozeVoiceClient";
 
 const scenes = [
   {
@@ -142,6 +142,7 @@ const navs = [
 ];
 
 export default function AISocialSkillsPlatform() {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("home");
   const [sceneId, setSceneId] = useState(1);
   const [input, setInput] = useState("");
@@ -560,6 +561,8 @@ export default function AISocialSkillsPlatform() {
     setVoiceLiveMessages(voiceMessagesRef.current);
 
     try {
+      setVoiceStatus("姝ｅ湪鍔犺浇瀹炴椂璇煶妯″潡...");
+      const { createCozeVoiceSession } = await import("./cozeVoiceClient");
       await refreshVoiceInputDevices();
       const inputDeviceId = voiceSelectedInputId || "";
       const session = await createCozeVoiceSession({
@@ -789,12 +792,20 @@ export default function AISocialSkillsPlatform() {
             <div style={{ fontWeight: 800, fontSize: "20px" }}>语依</div>
             <div style={{ color: "#7584a3", fontSize: "13px", marginTop: "4px" }}>训练模块 · 辅助模块 · 语音通话 · 社交故事 · 共情模拟</div>
           </div>
-          <div style={styles.navWrap}>
-            {navs.map((nav) => (
-              <button key={nav.key} style={styles.navBtn(activeTab === nav.key)} onClick={() => setActiveTab(nav.key)}>
-                {nav.label}
-              </button>
-            ))}
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <div style={styles.navWrap}>
+              {navs.map((nav) => (
+                <button key={nav.key} style={styles.navBtn(activeTab === nav.key)} onClick={() => setActiveTab(nav.key)}>
+                  {nav.label}
+                </button>
+              ))}
+            </div>
+            <button
+              style={{ border: "1px solid #e1e7f0", background: "#fff", color: "#7584a3", borderRadius: "10px", padding: "8px 14px", fontWeight: 600, cursor: "pointer", fontSize: "13px" }}
+              onClick={() => navigate("/")}
+            >
+              切换身份
+            </button>
           </div>
         </div>
 
