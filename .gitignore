@@ -24,3 +24,5 @@ dist-ssr
 *.sw?
 .env
 users.json
+sessions.json
+notes.json

@@ -66,6 +66,18 @@ function saveUsers() {
 }
 loadUsers();
 
+// ── Session & Note stores ─────────────────────────────────────────────────────
+const SESSIONS_FILE = path.join(__dirname, "sessions.json");
+const NOTES_FILE = path.join(__dirname, "notes.json");
+let SESSIONS = [];
+let NOTES = [];
+function loadSessions() { try { SESSIONS = JSON.parse(fs.readFileSync(SESSIONS_FILE, "utf-8")); } catch { SESSIONS = []; } }
+function saveSessions() { fs.writeFileSync(SESSIONS_FILE, JSON.stringify(SESSIONS, null, 2), "utf-8"); }
+function loadNotes() { try { NOTES = JSON.parse(fs.readFileSync(NOTES_FILE, "utf-8")); } catch { NOTES = []; } }
+function saveNotes() { fs.writeFileSync(NOTES_FILE, JSON.stringify(NOTES, null, 2), "utf-8"); }
+loadSessions();
+loadNotes();
+
 // ── CAPTCHA store (in-memory, 5 min TTL, one-time use) ─────────────────────────────
 const EMOJI_POOL = [
   { emoji: "🐱", label: "小猫" }, { emoji: "🐶", label: "小狗" }, { emoji: "🐰", label: "小兔" },
@@ -623,52 +635,101 @@ app.get("/api/auth/me", (req, res) => {
   }
 });
 
-// ── Teacher endpoints ──────────────────────────────────────────────────────
+function getAuthUser(req) {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith("Bearer ")) return null;
+  try { return jwt.verify(auth.slice(7), JWT_SECRET); } catch { return null; }
+}
 
-app.get("/api/teacher/classes", (req, res) => {
-  res.json([
-    { id: 1, name: "星光班", count: 8, avgScore: 81 },
-    { id: 2, name: "成长班", count: 6, avgScore: 76 },
-    { id: 3, name: "实践班", count: 5, avgScore: 85 },
-  ]);
+// ── Student endpoints ─────────────────────────────────────────────────────────
+
+app.post("/api/student/session", (req, res) => {
+  const user = getAuthUser(req);
+  if (!user || user.role !== "student") return res.status(401).json({ error: "未授权" });
+  const { module, moduleName, score, duration, summary, scene } = req.body || {};
+  const session = {
+    id: crypto.randomBytes(8).toString("hex"),
+    studentId: user.id,
+    studentName: user.name,
+    studentUsername: user.username,
+    module: module || "train",
+    moduleName: moduleName || "训练模块",
+    scene: scene || "",
+    score: Number(score) || 0,
+    duration: Number(duration) || 0,
+    summary: summary || "",
+    timestamp: new Date().toISOString(),
+  };
+  SESSIONS.push(session);
+  saveSessions();
+  res.json({ ok: true, session });
 });
 
-app.get("/api/teacher/students/:classId", (req, res) => {
-  const map = {
-    1: [
-      { id: 101, name: "小明", lastSession: "2026-05-24", totalSessions: 12, avgScore: 83, trend: "+4" },
-      { id: 102, name: "小华", lastSession: "2026-05-23", totalSessions: 9, avgScore: 79, trend: "+2" },
-      { id: 103, name: "小燕", lastSession: "2026-05-22", totalSessions: 15, avgScore: 88, trend: "+6" },
-      { id: 104, name: "小峰", lastSession: "2026-05-21", totalSessions: 7, avgScore: 74, trend: "-1" },
-    ],
-    2: [
-      { id: 105, name: "小雨", lastSession: "2026-05-24", totalSessions: 10, avgScore: 77, trend: "+3" },
-      { id: 106, name: "小林", lastSession: "2026-05-20", totalSessions: 8, avgScore: 72, trend: "0" },
-    ],
-    3: [
-      { id: 107, name: "小涛", lastSession: "2026-05-23", totalSessions: 14, avgScore: 86, trend: "+5" },
-      { id: 108, name: "小蕾", lastSession: "2026-05-22", totalSessions: 11, avgScore: 84, trend: "+2" },
-    ],
-  };
-  const students = map[req.params.classId];
-  if (!students) return res.status(404).json({ error: "class not found" });
+// ── Teacher endpoints ──────────────────────────────────────────────────────
+
+app.get("/api/teacher/students", (req, res) => {
+  const user = getAuthUser(req);
+  if (!user || user.role !== "teacher") return res.status(401).json({ error: "未授权" });
+  const students = USERS.filter((u) => u.role === "student").map((s) => {
+    const sSessions = SESSIONS.filter((se) => se.studentId === s.id);
+    const sorted = [...sSessions].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    const avgScore = sSessions.length ? Math.round(sSessions.reduce((sum, se) => sum + se.score, 0) / sSessions.length) : null;
+    const recent = sorted.slice(0, 5);
+    const older = sorted.slice(5, 10);
+    const recentAvg = recent.length ? recent.reduce((s, e) => s + e.score, 0) / recent.length : null;
+    const olderAvg = older.length ? older.reduce((s, e) => s + e.score, 0) / older.length : null;
+    const trend = (recentAvg !== null && olderAvg !== null) ? Math.round(recentAvg - olderAvg) : null;
+    return {
+      id: s.id, username: s.username, name: s.name,
+      totalSessions: sSessions.length,
+      avgScore,
+      trend: trend !== null ? (trend >= 0 ? `+${trend}` : `${trend}`) : null,
+      lastSession: sorted[0]?.timestamp ? sorted[0].timestamp.slice(0, 10) : null,
+      noteCount: NOTES.filter((n) => n.studentId === s.id).length,
+    };
+  });
   res.json(students);
 });
 
-app.get("/api/teacher/students/:studentId/report", (req, res) => {
-  const sessions = {
-    101: [
-      { date: "2026-05-24", module: "训练模块", scene: "打招呼", score: 86, comment: "开头自然，主动提问，整体流畅" },
-      { date: "2026-05-22", module: "语音通话", scene: "老师来电", score: 80, comment: "回应较慢，但内容完整" },
-      { date: "2026-05-20", module: "共情模拟", scene: "朋友考试失利", score: 85, comment: "能识别负面情绪，回应有温度" },
-    ],
-    102: [
-      { date: "2026-05-23", module: "训练模块", scene: "请求帮助", score: 78, comment: "表达清楚，但略显紧张" },
-      { date: "2026-05-21", module: "社交故事", scene: "加入聊天", score: 81, comment: "选择了较优方案" },
-    ],
+app.get("/api/teacher/student/:id/sessions", (req, res) => {
+  const user = getAuthUser(req);
+  if (!user || user.role !== "teacher") return res.status(401).json({ error: "未授权" });
+  const studentId = Number(req.params.id);
+  const sessions = SESSIONS.filter((s) => s.studentId === studentId)
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+    .slice(0, 30);
+  res.json(sessions);
+});
+
+app.get("/api/teacher/student/:id/notes", (req, res) => {
+  const user = getAuthUser(req);
+  if (!user || user.role !== "teacher") return res.status(401).json({ error: "未授权" });
+  const studentId = Number(req.params.id);
+  const notes = NOTES.filter((n) => n.studentId === studentId)
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  res.json(notes);
+});
+
+app.post("/api/teacher/student/:id/note/save", (req, res) => {
+  const user = getAuthUser(req);
+  if (!user || user.role !== "teacher") return res.status(401).json({ error: "未授权" });
+  const studentId = Number(req.params.id);
+  const { suggestion, homework, encouragement, observation } = req.body || {};
+  if (!suggestion?.trim()) return res.status(400).json({ error: "内容不能为空" });
+  const note = {
+    id: crypto.randomBytes(8).toString("hex"),
+    teacherId: user.id,
+    teacherName: user.name,
+    studentId,
+    observation: observation || "",
+    suggestion: suggestion.trim(),
+    homework: homework || "",
+    encouragement: encouragement || "",
+    timestamp: new Date().toISOString(),
   };
-  const data = sessions[req.params.studentId] || [];
-  res.json(data);
+  NOTES.push(note);
+  saveNotes();
+  res.json({ ok: true, note });
 });
 
 app.post("/api/teacher/note", async (req, res) => {
@@ -727,32 +788,71 @@ ${sessionSummary}
 
 // ── Parent endpoints ────────────────────────────────────────────────────────
 
-app.get("/api/parent/child/report", (req, res) => {
-  res.json({
-    childName: "小明",
-    weekStart: "2026-05-19",
-    weekEnd: "2026-05-25",
-    totalSessions: 5,
-    avgScore: 83,
-    bestModule: "共情模拟",
-    improvement: "+4",
-    modules: [
-      { name: "训练模块", sessions: 2, avgScore: 85 },
-      { name: "语音通话", sessions: 1, avgScore: 80 },
-      { name: "共情模拟", sessions: 1, avgScore: 88 },
-      { name: "社交故事", sessions: 1, avgScore: 79 },
-    ],
-  });
+app.get("/api/parent/students", (req, res) => {
+  const user = getAuthUser(req);
+  if (!user || user.role !== "parent") return res.status(401).json({ error: "未授权" });
+  const parent = USERS.find((u) => u.id === user.id);
+  if (!parent?.childId) return res.json({ linked: false, child: null });
+  const child = USERS.find((u) => u.id === parent.childId && u.role === "student");
+  if (!child) return res.json({ linked: false, child: null });
+  res.json({ linked: true, child: { id: child.id, name: child.name, username: child.username } });
 });
 
-app.get("/api/parent/child/sessions", (req, res) => {
-  res.json([
-    { date: "2026-05-24", module: "训练模块", scene: "打招呼", score: 86, comment: "开头自然，主动提问，整体流畅" },
-    { date: "2026-05-23", module: "共情模拟", scene: "朋友考试失利", score: 88, comment: "能识别负面情绪，回应有温度" },
-    { date: "2026-05-22", module: "语音通话", scene: "老师来电", score: 80, comment: "回应较慢，但内容完整" },
-    { date: "2026-05-21", module: "社交故事", scene: "加入聊天", score: 79, comment: "选择了较优方案" },
-    { date: "2026-05-20", module: "训练模块", scene: "请求帮助", score: 83, comment: "表达清楚，思路连贯" },
-  ]);
+app.post("/api/parent/link-child", (req, res) => {
+  const user = getAuthUser(req);
+  if (!user || user.role !== "parent") return res.status(401).json({ error: "未授权" });
+  const { childUsername } = req.body || {};
+  if (!childUsername?.trim()) return res.status(400).json({ error: "请输入学员用户名" });
+  const child = USERS.find((u) => u.username === childUsername.trim() && u.role === "student");
+  if (!child) return res.status(404).json({ error: "未找到该学员账号，请确认用户名是否正确" });
+  const parent = USERS.find((u) => u.id === user.id);
+  parent.childId = child.id;
+  saveUsers();
+  res.json({ ok: true, child: { id: child.id, name: child.name, username: child.username } });
+});
+
+app.post("/api/parent/unlink-child", (req, res) => {
+  const user = getAuthUser(req);
+  if (!user || user.role !== "parent") return res.status(401).json({ error: "未授权" });
+  const parent = USERS.find((u) => u.id === user.id);
+  delete parent.childId;
+  saveUsers();
+  res.json({ ok: true });
+});
+
+app.get("/api/parent/student/:id/summary", (req, res) => {
+  const user = getAuthUser(req);
+  if (!user || user.role !== "parent") return res.status(401).json({ error: "未授权" });
+  const parent = USERS.find((u) => u.id === user.id);
+  if (!parent?.childId) return res.status(403).json({ error: "请先绑定孩子账号" });
+  const studentId = Number(req.params.id);
+  const student = USERS.find((u) => u.id === studentId && u.role === "student");
+  if (!student) return res.status(404).json({ error: "学员不存在" });
+  const allSessions = SESSIONS.filter((s) => s.studentId === studentId)
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  const now = Date.now();
+  const weekAgo = now - 7 * 24 * 3600 * 1000;
+  const weekSessions = allSessions.filter((s) => new Date(s.timestamp).getTime() >= weekAgo);
+  const moduleMap = {};
+  for (const s of allSessions) {
+    if (!moduleMap[s.module]) moduleMap[s.module] = { moduleName: s.moduleName, count: 0, total: 0 };
+    moduleMap[s.module].count++;
+    moduleMap[s.module].total += s.score;
+  }
+  const modules = Object.entries(moduleMap).map(([k, v]) => ({ module: k, moduleName: v.moduleName, sessions: v.count, avgScore: Math.round(v.total / v.count) }));
+  const bestModule = modules.sort((a, b) => b.avgScore - a.avgScore)[0];
+  const avgScore = allSessions.length ? Math.round(allSessions.reduce((s, e) => s + e.score, 0) / allSessions.length) : null;
+  const notes = NOTES.filter((n) => n.studentId === studentId).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  res.json({
+    student: { id: student.id, name: student.name, username: student.username },
+    totalSessions: allSessions.length,
+    weekSessions: weekSessions.length,
+    avgScore,
+    bestModule: bestModule?.moduleName || null,
+    modules,
+    recentSessions: allSessions.slice(0, 10),
+    notes,
+  });
 });
 
 app.post("/api/parent/practice", async (req, res) => {

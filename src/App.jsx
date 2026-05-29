@@ -328,6 +328,20 @@ export default function AISocialSkillsPlatform() {
         const filtered = prev.filter((item) => item.name !== currentScene.title);
         return [...filtered, { name: currentScene.title, score: scoreData.score || 0 }];
       });
+      const token = localStorage.getItem("token");
+      if (token && scoreData.score) {
+        fetch(`${API_BASE}/api/student/session`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            module: "train",
+            moduleName: "文本社交训练",
+            scene: currentScene.title,
+            score: scoreData.score,
+            summary: scoreData.comment || "",
+          }),
+        }).catch(() => {});
+      }
     } catch (error) {
       setMessages((prev) => [...prev, { sender: "other", text: `出错了：${error.message}` }]);
     } finally {

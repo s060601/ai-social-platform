@@ -1,82 +1,108 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { API_BASE } from "./config";
 
-const mockReport = {
-  childName: "小明",
-  weekStart: "2026-05-19",
-  weekEnd: "2026-05-25",
-  totalSessions: 5,
-  avgScore: 83,
-  bestModule: "共情模拟",
-  improvement: "+4",
-  modules: [
-    { name: "训练模块", sessions: 2, avgScore: 85 },
-    { name: "语音通话", sessions: 1, avgScore: 80 },
-    { name: "共情模拟", sessions: 1, avgScore: 88 },
-    { name: "社交故事", sessions: 1, avgScore: 79 },
-  ],
-};
-
-const mockTrends = [
-  { week: "5月第1周", clarity: 72, relevance: 70, empathy: 68, overall: 70 },
-  { week: "5月第2周", clarity: 76, relevance: 74, empathy: 72, overall: 74 },
-  { week: "5月第3周", clarity: 80, relevance: 78, empathy: 79, overall: 79 },
-  { week: "5月第4周", clarity: 83, relevance: 82, empathy: 84, overall: 83 },
-];
-
-const mockTeacherFeedback = [
-  {
-    date: "2026-05-24",
-    teacher: "王老师",
-    content:
-      "本周小明在训练模块中表现积极，打招呼场景接话自然，主动提问次数增加。语音通话中回应速度有所提升，建议继续练习主动发起话题。",
-    homework: "每天找一个真实情境，练习主动问一个跟进问题。",
-    encouragement: "小明这周进步很大，继续保持这个状态！",
-  },
-  {
-    date: "2026-05-17",
-    teacher: "王老师",
-    content:
-      "小明在共情模拟中能识别他人情绪，回应有温度。社交故事练习中选择更优方案的比例提升。",
-    homework: "可以尝试和家人进行一次角色扮演，练习被拒绝时的平和回应。",
-    encouragement: "你学会了先理解别人的感受，这是很重要的社交技能！",
-  },
-];
-
-const mockSessions = [
-  { date: "2026-05-24", module: "训练模块", scene: "打招呼", score: 86, comment: "开头自然，主动提问，整体流畅" },
-  { date: "2026-05-23", module: "共情模拟", scene: "朋友考试失利", score: 88, comment: "能识别负面情绪，回应有温度" },
-  { date: "2026-05-22", module: "语音通话", scene: "老师来电", score: 80, comment: "回应较慢，但内容完整" },
-  { date: "2026-05-21", module: "社交故事", scene: "加入聊天", score: 79, comment: "选择了较优方案" },
-  { date: "2026-05-20", module: "训练模块", scene: "请求帮助", score: 83, comment: "表达清楚，思路连贯" },
-];
-
 const navs = [
-  { key: "report", label: "训练周报" },
-  { key: "trends", label: "能力趋势" },
+  { key: "report", label: "训练总览" },
   { key: "feedback", label: "教师反馈" },
   { key: "practice", label: "练习建议" },
 ];
 
+function authHeaders() {
+  const token = localStorage.getItem("token");
+  return { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
+
 export default function ParentApp() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("report");
+  const [linked, setLinked] = useState(null);
+  const [child, setChild] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [loadingInit, setLoadingInit] = useState(true);
+  const [loadingSummary, setLoadingSummary] = useState(false);
+  const [linkInput, setLinkInput] = useState("");
+  const [linkLoading, setLinkLoading] = useState(false);
+  const [linkError, setLinkError] = useState("");
   const [practiceLoading, setPracticeLoading] = useState(false);
   const [practiceOutput, setPracticeOutput] = useState(null);
 
+  useEffect(() => {
+    fetch(`${API_BASE}/api/parent/students`, { headers: authHeaders() })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.linked && data.child) {
+          setLinked(true);
+          setChild(data.child);
+          loadSummary(data.child);
+        } else {
+          setLinked(false);
+        }
+      })
+      .catch(() => setLinked(false))
+      .finally(() => setLoadingInit(false));
+  }, []);
+
+  function loadSummary(c) {
+    setSummary(null);
+    setPracticeOutput(null);
+    setLoadingSummary(true);
+    fetch(`${API_BASE}/api/parent/student/${c.id}/summary`, { headers: authHeaders() })
+      .then((r) => r.json())
+      .then((data) => setSummary(data))
+      .catch(() => {})
+      .finally(() => setLoadingSummary(false));
+  }
+
+  async function linkChild() {
+    const username = linkInput.trim();
+    if (!username || linkLoading) return;
+    setLinkLoading(true);
+    setLinkError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/parent/link-child`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ childUsername: username }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "绑定失败");
+      setLinked(true);
+      setChild(data.child);
+      setLinkInput("");
+      loadSummary(data.child);
+    } catch (e) {
+      setLinkError(e.message);
+    } finally {
+      setLinkLoading(false);
+    }
+  }
+
+  async function unlinkChild() {
+    if (!window.confirm("确定解除与孩子账号的绑定吗？")) return;
+    await fetch(`${API_BASE}/api/parent/unlink-child`, { method: "POST", headers: authHeaders() });
+    setLinked(false);
+    setChild(null);
+    setSummary(null);
+    setActiveTab("report");
+  }
+
   async function generatePracticePlan() {
-    if (practiceLoading) return;
+    if (practiceLoading || !summary) return;
     setPracticeLoading(true);
     try {
+      const latestNote = summary.notes?.[0];
       const res = await fetch(`${API_BASE}/api/parent/practice`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({
-          childName: mockReport.childName,
-          weekReport: mockReport,
-          trends: mockTrends,
-          latestFeedback: mockTeacherFeedback[0],
+          childName: selectedChild?.name,
+          weekReport: {
+            totalSessions: summary.weekSessions,
+            avgScore: summary.avgScore,
+            bestModule: summary.bestModule,
+          },
+          latestFeedback: latestNote ? { homework: latestNote.homework } : null,
         }),
       });
       const data = await res.json();
@@ -111,8 +137,60 @@ export default function ParentApp() {
     row: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 0", borderBottom: "1px solid #edf1f7" },
   };
 
-  const latestTrend = mockTrends[mockTrends.length - 1];
-  const prevTrend = mockTrends[mockTrends.length - 2];
+  if (loadingInit) {
+    return (
+      <div style={styles.page}>
+        <div style={styles.shell}>
+          <div style={styles.topbar}>
+            <div style={{ fontWeight: 800, fontSize: "20px" }}>语依 · 家长端</div>
+            <button style={styles.backBtn} onClick={() => navigate("/")}>切换身份</button>
+          </div>
+          <div style={{ ...styles.card, color: "#aab4c8" }}>加载中...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!linked) {
+    return (
+      <div style={styles.page}>
+        <div style={styles.shell}>
+          <div style={styles.topbar}>
+            <div style={{ fontWeight: 800, fontSize: "20px" }}>语依 · 家长端</div>
+            <button style={styles.backBtn} onClick={() => navigate("/")}>切换身份</button>
+          </div>
+          <div style={{ maxWidth: "480px", margin: "60px auto" }}>
+            <div style={styles.card}>
+              <div style={{ fontSize: "40px", textAlign: "center", marginBottom: "16px" }}>👨‍👩‍👧</div>
+              <h2 style={{ margin: "0 0 8px", textAlign: "center" }}>关联孩子的账号</h2>
+              <p style={{ color: "#7584a3", lineHeight: 1.8, marginBottom: "20px", textAlign: "center" }}>
+                输入孩子在学员端注册的<strong>用户名</strong>，即可查看他的训练数据和教师反馈。
+              </p>
+              <input
+                value={linkInput}
+                onChange={(e) => { setLinkInput(e.target.value); setLinkError(""); }}
+                onKeyDown={(e) => e.key === "Enter" && linkChild()}
+                placeholder="输入孩子的学员用户名"
+                style={{ width: "100%", borderRadius: "14px", border: linkError ? "2px solid #d14b5a" : "1px solid #d9e2f0", padding: "14px", fontSize: "16px", boxSizing: "border-box", outline: "none", marginBottom: "12px" }}
+              />
+              {linkError && (
+                <div style={{ color: "#d14b5a", fontSize: "14px", marginBottom: "12px" }}>{linkError}</div>
+              )}
+              <button
+                style={{ ...styles.primaryBtn, width: "100%", padding: "14px", fontSize: "16px" }}
+                onClick={linkChild}
+              >
+                {linkLoading ? "绑定中..." : "绑定账号"}
+              </button>
+              <div style={{ marginTop: "16px", color: "#aab4c8", fontSize: "13px", textAlign: "center" }}>
+                孩子还没有账号？请让他先在学员端注册。
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={styles.page}>
@@ -120,7 +198,9 @@ export default function ParentApp() {
         <div style={styles.topbar}>
           <div>
             <div style={{ fontWeight: 800, fontSize: "20px" }}>语依 · 家长端</div>
-            <div style={{ color: "#7584a3", fontSize: "13px", marginTop: "4px" }}>训练周报 · 能力趋势 · 教师反馈</div>
+            <div style={{ color: "#7584a3", fontSize: "13px", marginTop: "4px" }}>
+              {child ? `查看：${child.name}（@${child.username}）` : "训练总览 · 教师反馈"}
+            </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
             <div style={styles.navWrap}>
@@ -130,198 +210,155 @@ export default function ParentApp() {
                 </button>
               ))}
             </div>
+            <button style={{ ...styles.backBtn, color: "#d14b5a", borderColor: "#f5c6c6" }} onClick={unlinkChild}>解除绑定</button>
             <button style={styles.backBtn} onClick={() => navigate("/")}>切换身份</button>
           </div>
         </div>
 
-        {activeTab === "report" && (
-          <div>
-            <div style={styles.hero}>
-              <div style={{ fontSize: "14px", opacity: 0.9, marginBottom: "8px" }}>
-                {mockReport.weekStart} — {mockReport.weekEnd} 周报
-              </div>
-              <div style={{ fontSize: "32px", fontWeight: 900, marginBottom: "4px" }}>
-                {mockReport.childName} 本周训练总览
-              </div>
-              <div style={{ display: "flex", gap: "20px", flexWrap: "wrap", marginTop: "18px" }}>
-                <div style={{ background: "rgba(255,255,255,0.22)", borderRadius: "16px", padding: "14px 20px" }}>
-                  <div style={{ fontSize: "12px", opacity: 0.85 }}>训练次数</div>
-                  <div style={{ fontSize: "28px", fontWeight: 900 }}>{mockReport.totalSessions} 次</div>
-                </div>
-                <div style={{ background: "rgba(255,255,255,0.22)", borderRadius: "16px", padding: "14px 20px" }}>
-                  <div style={{ fontSize: "12px", opacity: 0.85 }}>平均得分</div>
-                  <div style={{ fontSize: "28px", fontWeight: 900 }}>{mockReport.avgScore} 分</div>
-                </div>
-                <div style={{ background: "rgba(255,255,255,0.22)", borderRadius: "16px", padding: "14px 20px" }}>
-                  <div style={{ fontSize: "12px", opacity: 0.85 }}>本周进步</div>
-                  <div style={{ fontSize: "28px", fontWeight: 900 }}>{mockReport.improvement}</div>
-                </div>
-                <div style={{ background: "rgba(255,255,255,0.22)", borderRadius: "16px", padding: "14px 20px" }}>
-                  <div style={{ fontSize: "12px", opacity: 0.85 }}>最强模块</div>
-                  <div style={{ fontSize: "22px", fontWeight: 900 }}>{mockReport.bestModule}</div>
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "18px" }}>
-              <div style={styles.card}>
-                <div style={styles.sectionTitle}>各模块训练情况</div>
-                {mockReport.modules.map((mod) => (
-                  <div key={mod.name} style={styles.row}>
-                    <div>
-                      <div style={{ fontWeight: 700 }}>{mod.name}</div>
-                      <div style={{ color: "#7584a3", fontSize: "13px", marginTop: "2px" }}>{mod.sessions} 次练习</div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontWeight: 800, fontSize: "22px", color: "#f77f00" }}>{mod.avgScore}</div>
-                      <div style={{ fontSize: "12px", color: "#7584a3" }}>分</div>
-                    </div>
+        {loadingSummary ? (
+          <div style={{ ...styles.card, color: "#aab4c8" }}>加载中...</div>
+        ) : !summary ? (
+          <div style={{ ...styles.card, color: "#aab4c8" }}>暂无数据</div>
+        ) : (
+          <>
+            {activeTab === "report" && (
+              <div>
+                <div style={styles.hero}>
+                  <div style={{ fontSize: "14px", opacity: 0.9, marginBottom: "8px" }}>训练总览</div>
+                  <div style={{ fontSize: "32px", fontWeight: 900, marginBottom: "4px" }}>
+                    {summary.student.name} 的训练数据
                   </div>
-                ))}
-              </div>
-
-              <div style={styles.card}>
-                <div style={styles.sectionTitle}>最近练习记录</div>
-                {mockSessions.slice(0, 5).map((s, idx) => (
-                  <div key={idx} style={styles.row}>
-                    <div>
-                      <div style={{ fontWeight: 700 }}>{s.scene}</div>
-                      <div style={{ color: "#7584a3", fontSize: "13px", marginTop: "2px" }}>{s.date} · {s.module}</div>
+                  <div style={{ display: "flex", gap: "20px", flexWrap: "wrap", marginTop: "18px" }}>
+                    <div style={{ background: "rgba(255,255,255,0.22)", borderRadius: "16px", padding: "14px 20px" }}>
+                      <div style={{ fontSize: "12px", opacity: 0.85 }}>本周训练</div>
+                      <div style={{ fontSize: "28px", fontWeight: 900 }}>{summary.weekSessions} 次</div>
                     </div>
-                    <div style={{ fontWeight: 800, fontSize: "20px", color: "#f77f00" }}>{s.score}</div>
+                    <div style={{ background: "rgba(255,255,255,0.22)", borderRadius: "16px", padding: "14px 20px" }}>
+                      <div style={{ fontSize: "12px", opacity: 0.85 }}>累计训练</div>
+                      <div style={{ fontSize: "28px", fontWeight: 900 }}>{summary.totalSessions} 次</div>
+                    </div>
+                    {summary.avgScore !== null && (
+                      <div style={{ background: "rgba(255,255,255,0.22)", borderRadius: "16px", padding: "14px 20px" }}>
+                        <div style={{ fontSize: "12px", opacity: 0.85 }}>平均得分</div>
+                        <div style={{ fontSize: "28px", fontWeight: 900 }}>{summary.avgScore} 分</div>
+                      </div>
+                    )}
+                    {summary.bestModule && (
+                      <div style={{ background: "rgba(255,255,255,0.22)", borderRadius: "16px", padding: "14px 20px" }}>
+                        <div style={{ fontSize: "12px", opacity: 0.85 }}>最强模块</div>
+                        <div style={{ fontSize: "22px", fontWeight: 900 }}>{summary.bestModule}</div>
+                      </div>
+                    )}
                   </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
+                </div>
 
-        {activeTab === "trends" && (
-          <div style={{ maxWidth: "900px", margin: "0 auto" }}>
-            <div style={{ ...styles.card, marginBottom: "18px" }}>
-              <div style={styles.sectionTitle}>能力维度趋势（近四周）</div>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "8px" }}>
-                  <thead>
-                    <tr>
-                      {["周次", "表达清晰", "情境相关", "共情能力", "综合得分"].map((h) => (
-                        <th key={h} style={{ textAlign: "left", padding: "10px 12px", color: "#7584a3", fontSize: "13px", fontWeight: 700, borderBottom: "2px solid #edf1f7" }}>
-                          {h}
-                        </th>
+                {summary.totalSessions === 0 ? (
+                  <div style={styles.card}>
+                    <div style={{ color: "#aab4c8", padding: "16px 0" }}>孩子还没有训练记录，鼓励他去练习吧！</div>
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "18px" }}>
+                    <div style={styles.card}>
+                      <div style={styles.sectionTitle}>各模块训练情况</div>
+                      {summary.modules.map((mod) => (
+                        <div key={mod.module} style={styles.row}>
+                          <div>
+                            <div style={{ fontWeight: 700 }}>{mod.moduleName}</div>
+                            <div style={{ color: "#7584a3", fontSize: "13px", marginTop: "2px" }}>{mod.sessions} 次练习</div>
+                          </div>
+                          <div style={{ textAlign: "right" }}>
+                            <div style={{ fontWeight: 800, fontSize: "22px", color: "#f77f00" }}>{mod.avgScore}</div>
+                            <div style={{ fontSize: "12px", color: "#7584a3" }}>分</div>
+                          </div>
+                        </div>
                       ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {mockTrends.map((row, idx) => {
-                      const isLatest = idx === mockTrends.length - 1;
-                      return (
-                        <tr key={idx} style={{ background: isLatest ? "#fff8f0" : "transparent" }}>
-                          <td style={{ padding: "12px", fontWeight: isLatest ? 800 : 500, color: isLatest ? "#f77f00" : "#1f2a44" }}>
-                            {row.week}
-                          </td>
-                          {[row.clarity, row.relevance, row.empathy, row.overall].map((val, vi) => (
-                            <td key={vi} style={{ padding: "12px" }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                                <div style={{ flex: 1, height: "8px", background: "#eef2f8", borderRadius: "999px", overflow: "hidden" }}>
-                                  <div style={{ width: `${val}%`, height: "100%", background: isLatest ? "#f77f00" : "#c8d6f5", borderRadius: "999px" }} />
-                                </div>
-                                <span style={{ fontWeight: 700, minWidth: "32px", color: isLatest ? "#f77f00" : "#1f2a44" }}>{val}</span>
-                              </div>
-                            </td>
-                          ))}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "14px" }}>
-              {[
-                { label: "表达清晰", cur: latestTrend.clarity, prev: prevTrend.clarity },
-                { label: "情境相关", cur: latestTrend.relevance, prev: prevTrend.relevance },
-                { label: "共情能力", cur: latestTrend.empathy, prev: prevTrend.empathy },
-              ].map((item) => {
-                const diff = item.cur - item.prev;
-                return (
-                  <div key={item.label} style={styles.card}>
-                    <div style={styles.sectionTitle}>{item.label}</div>
-                    <div style={{ fontSize: "40px", fontWeight: 900, color: "#f77f00" }}>{item.cur}</div>
-                    <div style={{ fontSize: "13px", color: diff > 0 ? "#22a06b" : diff < 0 ? "#d14b5a" : "#7584a3", marginTop: "6px" }}>
-                      {diff > 0 ? `↑ +${diff}` : diff < 0 ? `↓ ${diff}` : "→ 持平"} 较上周
+                    </div>
+                    <div style={styles.card}>
+                      <div style={styles.sectionTitle}>最近练习记录</div>
+                      {summary.recentSessions.slice(0, 5).map((s, idx) => (
+                        <div key={idx} style={styles.row}>
+                          <div>
+                            <div style={{ fontWeight: 700 }}>{s.moduleName}{s.scene ? ` · ${s.scene}` : ""}</div>
+                            <div style={{ color: "#7584a3", fontSize: "13px", marginTop: "2px" }}>{s.timestamp?.slice(0, 10)}</div>
+                          </div>
+                          <div style={{ fontWeight: 800, fontSize: "20px", color: "#f77f00" }}>{s.score}</div>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {activeTab === "feedback" && (
-          <div style={{ maxWidth: "880px", margin: "0 auto", display: "grid", gap: "18px" }}>
-            {mockTeacherFeedback.map((fb, idx) => (
-              <div key={idx} style={styles.card}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
-                  <div style={{ fontWeight: 800, fontSize: "16px" }}>{fb.teacher} 的反馈</div>
-                  <div style={{ color: "#7584a3", fontSize: "13px" }}>{fb.date}</div>
-                </div>
-                <div style={{ background: "#f7f9fd", borderRadius: "14px", padding: "14px", lineHeight: 1.8, marginBottom: "12px" }}>
-                  {fb.content}
-                </div>
-                {fb.homework && (
-                  <div style={{ background: "#fff8e6", borderRadius: "14px", padding: "14px", lineHeight: 1.8, marginBottom: "12px" }}>
-                    <span style={{ color: "#a07000", fontWeight: 700, fontSize: "13px" }}>家庭作业：</span>
-                    {fb.homework}
-                  </div>
-                )}
-                {fb.encouragement && (
-                  <div style={{ background: "#e8f8f1", borderRadius: "14px", padding: "14px", lineHeight: 1.8 }}>
-                    <span style={{ color: "#22a06b", fontWeight: 700, fontSize: "13px" }}>鼓励话语：</span>
-                    {fb.encouragement}
-                  </div>
                 )}
               </div>
-            ))}
-          </div>
-        )}
+            )}
 
-        {activeTab === "practice" && (
-          <div style={{ maxWidth: "880px", margin: "0 auto" }}>
-            <div style={styles.card}>
-              <div style={styles.sectionTitle}>家庭练习建议</div>
-              <h2 style={{ marginTop: 0 }}>AI 生成本周家庭练习计划</h2>
-              <p style={{ color: "#60708f", lineHeight: 1.8 }}>
-                根据 {mockReport.childName} 本周的训练数据和教师反馈，生成适合在家练习的活动建议。
-              </p>
-              <div style={{ display: "flex", gap: "10px" }}>
-                <button style={styles.primaryBtn} onClick={generatePracticePlan}>
-                  {practiceLoading ? "生成中..." : "生成练习建议"}
-                </button>
-                {practiceOutput && (
-                  <button style={styles.secondaryBtn} onClick={() => setPracticeOutput(null)}>清空</button>
+            {activeTab === "feedback" && (
+              <div style={{ maxWidth: "880px", margin: "0 auto", display: "grid", gap: "18px" }}>
+                {summary.notes.length === 0 ? (
+                  <div style={styles.card}>
+                    <div style={{ color: "#aab4c8", padding: "16px 0" }}>教师暂未添加批注反馈</div>
+                  </div>
+                ) : (
+                  summary.notes.map((note, idx) => (
+                    <div key={idx} style={styles.card}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+                        <div style={{ fontWeight: 800, fontSize: "16px" }}>{note.teacherName} 的反馈</div>
+                        <div style={{ color: "#7584a3", fontSize: "13px" }}>{note.timestamp?.slice(0, 10)}</div>
+                      </div>
+                      <div style={{ background: "#f7f9fd", borderRadius: "14px", padding: "14px", lineHeight: 1.8, marginBottom: "12px" }}>
+                        {note.suggestion}
+                      </div>
+                      {note.homework && (
+                        <div style={{ background: "#fff8e6", borderRadius: "14px", padding: "14px", lineHeight: 1.8, marginBottom: "12px" }}>
+                          <span style={{ color: "#a07000", fontWeight: 700, fontSize: "13px" }}>家庭作业：</span>
+                          {note.homework}
+                        </div>
+                      )}
+                      {note.encouragement && (
+                        <div style={{ background: "#e8f8f1", borderRadius: "14px", padding: "14px", lineHeight: 1.8 }}>
+                          <span style={{ color: "#22a06b", fontWeight: 700, fontSize: "13px" }}>鼓励话语：</span>
+                          {note.encouragement}
+                        </div>
+                      )}
+                    </div>
+                  ))
                 )}
               </div>
+            )}
 
-              {practiceOutput && (
-                <div style={{ marginTop: "18px", display: "grid", gap: "12px" }}>
-                  {practiceOutput.tip && (
-                    <div style={{ background: "#fff8e6", borderRadius: "16px", padding: "14px 16px", lineHeight: 1.8 }}>
-                      <span style={{ color: "#a07000", fontWeight: 700 }}>温馨提示：</span>{practiceOutput.tip}
+            {activeTab === "practice" && (
+              <div style={{ maxWidth: "880px", margin: "0 auto" }}>
+                <div style={styles.card}>
+                  <div style={styles.sectionTitle}>家庭练习建议</div>
+                  <h2 style={{ marginTop: 0 }}>AI 生成家庭练习计划</h2>
+                  <p style={{ color: "#60708f", lineHeight: 1.8 }}>
+                    根据 {summary.student.name} 的训练数据和教师反馈，生成适合在家练习的活动建议。
+                  </p>
+                  <div style={{ display: "flex", gap: "10px" }}>
+                    <button style={styles.primaryBtn} onClick={generatePracticePlan}>
+                      {practiceLoading ? "生成中..." : "生成练习建议"}
+                    </button>
+                    {practiceOutput && (
+                      <button style={styles.secondaryBtn} onClick={() => setPracticeOutput(null)}>清空</button>
+                    )}
+                  </div>
+                  {practiceOutput && (
+                    <div style={{ marginTop: "18px", display: "grid", gap: "12px" }}>
+                      {practiceOutput.tip && (
+                        <div style={{ background: "#fff8e6", borderRadius: "16px", padding: "14px 16px", lineHeight: 1.8 }}>
+                          <span style={{ color: "#a07000", fontWeight: 700 }}>温馨提示：</span>{practiceOutput.tip}
+                        </div>
+                      )}
+                      {(practiceOutput.activities || []).map((act, idx) => (
+                        <div key={idx} style={{ background: "#f7f9fd", borderRadius: "16px", padding: "16px" }}>
+                          <div style={{ fontWeight: 700, color: "#1f2a44", marginBottom: "6px" }}>{idx + 1}. {act.title}</div>
+                          <div style={{ color: "#60708f", lineHeight: 1.8 }}>{act.desc}</div>
+                        </div>
+                      ))}
                     </div>
                   )}
-                  {(practiceOutput.activities || []).map((act, idx) => (
-                    <div key={idx} style={{ background: "#f7f9fd", borderRadius: "16px", padding: "16px" }}>
-                      <div style={{ fontWeight: 700, color: "#1f2a44", marginBottom: "6px" }}>
-                        {idx + 1}. {act.title}
-                      </div>
-                      <div style={{ color: "#60708f", lineHeight: 1.8 }}>{act.desc}</div>
-                    </div>
-                  ))}
                 </div>
-              )}
-            </div>
-          </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
