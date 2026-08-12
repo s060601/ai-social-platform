@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "./AuthContext";
 import { API_BASE } from "./config";
@@ -10,6 +10,9 @@ const roles = [
   { key: "teacher", label: "教师", color: "#22a06b", bg: "linear-gradient(135deg,#22a06b 0%,#57d9a3 100%)" },
   { key: "parent",  label: "家长", color: "#f77f00", bg: "linear-gradient(135deg,#f77f00 0%,#ffb347 100%)" },
 ];
+
+const CONSENT_VERSION = "2026-08-12";
+const CONSENT_READ_SECONDS = 15;
 
 export default function RegisterPage() {
   const { register } = useAuth();
@@ -26,11 +29,22 @@ export default function RegisterPage() {
 
   const [captcha, setCaptcha] = useState({ id: "", emojis: [], target: null });
   const [captchaAnswer, setCaptchaAnswer] = useState("");
+  const [remainingReadSeconds, setRemainingReadSeconds] = useState(CONSENT_READ_SECONDS);
+  const [consentAtBottom, setConsentAtBottom] = useState(false);
+  const [consentAccepted, setConsentAccepted] = useState(false);
+  const consentTextRef = useRef(null);
+
+  const consentReady = remainingReadSeconds === 0 && consentAtBottom;
 
   async function refreshCaptcha() {
     setCaptchaAnswer("");
+    setError("");
+    setCaptcha({ id: "", emojis: [], target: null });
     try {
-      const res = await fetch(`${API_BASE}/api/auth/captcha`);
+      const res = await fetch(`${API_BASE}/api/auth/captcha?refresh=${Date.now()}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error("获取验证码失败");
       const data = await res.json();
       setCaptcha({ id: data.id, emojis: data.emojis, target: data.target });
     } catch {
@@ -39,6 +53,20 @@ export default function RegisterPage() {
   }
 
   useEffect(() => { refreshCaptcha(); }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setRemainingReadSeconds((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  function handleConsentScroll(event) {
+    const target = event.currentTarget;
+    if (target.scrollTop + target.clientHeight >= target.scrollHeight - 4) {
+      setConsentAtBottom(true);
+    }
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -58,6 +86,10 @@ export default function RegisterPage() {
       setError("两次输入的密码不一致");
       return;
     }
+    if (!consentReady || !consentAccepted) {
+      setError("请阅读到底并同意测评数据处理与原文记录说明");
+      return;
+    }
     if (!captcha.id || captchaAnswer === "") {
       setError("请完成人机验证");
       return;
@@ -72,6 +104,8 @@ export default function RegisterPage() {
         role,
         captchaId: captcha.id,
         captchaAnswer,
+        consentAccepted,
+        consentVersion: CONSENT_VERSION,
       });
       navigate(ROLE_PATH[data.role] || "/", { replace: true });
     } catch (err) {
@@ -202,6 +236,40 @@ export default function RegisterPage() {
                 autoComplete="new-password"
                 style={inputBase}
               />
+            </div>
+
+            <div style={{ display: "grid", gap: "9px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px" }}>
+                <label style={{ fontSize: "13px", fontWeight: 700, color: "#7584a3" }}>测评数据处理与原文记录说明</label>
+                <span style={{ fontSize: "12px", color: consentReady ? "#22a06b" : "#7584a3", whiteSpace: "nowrap" }}>
+                  {remainingReadSeconds > 0 ? `请阅读 ${remainingReadSeconds} 秒` : consentAtBottom ? "已阅读到底" : "请滚动到底部"}
+                </span>
+              </div>
+              <div
+                ref={consentTextRef}
+                onScroll={handleConsentScroll}
+                style={{
+                  maxHeight: "188px", overflowY: "auto", border: "1px solid #d9e2f0", borderRadius: "14px",
+                  padding: "14px", background: "#fbfcff", color: "#445474", fontSize: "13px", lineHeight: 1.75,
+                }}
+              >
+                <p style={{ marginTop: 0, fontWeight: 800, color: "#1f2a44" }}>知情同意</p>
+                <p>“语依”用于社会沟通练习与教育支持，不提供医学诊断结论。系统会记录账号信息、所选任务、完成时间、最终文字输入或最终语音转写、测评参考分和反馈内容，用于生成个人练习记录及向已关联的教师提供教育支持。</p>
+                <p>系统默认不保存原始录音，不保存未完成的语音识别片段。语音通话只会在识别到最终转写并完成本轮互动后保存文字记录；没有有效回应时不会生成评分或记录。</p>
+                <p>学生原文默认仅供本人和经授权的系统管理人员在教育支持范围内查看。已关联教师默认只能查看评分、行为摘要和支持建议；只有学生在“我的记录”中单独授权后，教师才能查看完整交流原文，学生也可以随时停止该授权。家长端仅查看汇总结果、评估摘要和教师反馈，不展示完整交流原文。系统管理人员将严格保密，不将记录用于与教育支持无关的用途。请不要在互动中输入身份证号、住址、银行卡号、诊断证明等与本次练习无关的敏感信息。</p>
+                <p>你可以查看自己的测评记录；如需更正或删除记录，或有使用建议、咨询问题，请联系系统管理人员：3546704972@qq.com。未满十四周岁的用户应在监护人知情并同意后注册和使用。</p>
+                <p style={{ marginBottom: 0 }}>继续注册，即表示你已阅读并理解以上说明，并同意按上述范围处理本次使用产生的测评数据与最终转写文本。版本号：{CONSENT_VERSION}</p>
+              </div>
+              <label style={{ display: "flex", gap: "9px", alignItems: "flex-start", color: consentReady ? "#1f2a44" : "#9aa8c0", fontSize: "13px", lineHeight: 1.55, cursor: consentReady ? "pointer" : "not-allowed" }}>
+                <input
+                  type="checkbox"
+                  checked={consentAccepted}
+                  disabled={!consentReady}
+                  onChange={(event) => setConsentAccepted(event.target.checked)}
+                  style={{ marginTop: "3px", accentColor: "#4f7cff" }}
+                />
+                我已阅读并同意上述测评数据处理与原文记录说明。
+              </label>
             </div>
 
             <div style={{ display: "grid", gap: "8px" }}>

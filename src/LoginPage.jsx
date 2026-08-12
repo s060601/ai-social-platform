@@ -29,8 +29,13 @@ export default function LoginPage() {
 
   async function refreshCaptcha() {
     setCaptchaAnswer("");
+    setError("");
+    setCaptcha({ id: "", emojis: [], target: null });
     try {
-      const res = await fetch(`${API_BASE}/api/auth/captcha`);
+      const res = await fetch(`${API_BASE}/api/auth/captcha?refresh=${Date.now()}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error("获取验证码失败");
       const data = await res.json();
       setCaptcha({ id: data.id, emojis: data.emojis, target: data.target });
     } catch {

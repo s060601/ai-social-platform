@@ -6,23 +6,23 @@ const roles = [
     key: "student",
     label: "学员端",
     icon: "🎓",
-    desc: "社交技能训练、语音练习、共情模拟",
+    desc: "情境动态测评、语音测评、社交故事与共情任务",
     color: "#4f7cff",
     bg: "linear-gradient(135deg, #4f7cff 0%, #79a7ff 100%)",
   },
   {
     key: "teacher",
-    label: "教师端",
+    label: "教师测评端",
     icon: "👩‍🏫",
-    desc: "班级管理、学生训练记录、批注与作业建议",
+    desc: "学员测评记录、六维能力画像、报告批注与支持建议",
     color: "#22a06b",
     bg: "linear-gradient(135deg, #22a06b 0%, #57d9a3 100%)",
   },
   {
     key: "parent",
-    label: "家长端",
+    label: "家长支持端",
     icon: "👨‍👩‍👧",
-    desc: "孩子训练周报、能力趋势、教师反馈",
+    desc: "孩子测评报告、能力趋势、教师反馈与家庭支持",
     color: "#f77f00",
     bg: "linear-gradient(135deg, #f77f00 0%, #ffb347 100%)",
   },
@@ -80,7 +80,7 @@ export default function RoleSelector() {
           语依
         </div>
         <div style={{ color: "#7584a3", fontSize: "16px", marginTop: "8px" }}>
-          欢迎回来，{user?.name}
+          社会技能动态测评系统 · 欢迎回来，{user?.name}
         </div>
       </div>
 

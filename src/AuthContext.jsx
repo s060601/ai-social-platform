@@ -36,11 +36,11 @@ export function AuthProvider({ children }) {
     return data;
   }, []);
 
-  const register = useCallback(async ({ username, password, name, role, captchaId, captchaAnswer }) => {
+  const register = useCallback(async ({ username, password, name, role, captchaId, captchaAnswer, consentAccepted, consentVersion }) => {
     const res = await fetch(`${API_BASE}/api/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password, name, role, captchaId, captchaAnswer }),
+      body: JSON.stringify({ username, password, name, role, captchaId, captchaAnswer, consentAccepted, consentVersion }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || "注册失败");

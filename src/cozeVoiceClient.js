@@ -140,7 +140,7 @@ export async function createCozeVoiceSession({
     const message = makeMessageEvent(eventName, event);
 
     if (message.type.includes("speech_started")) {
-      onStatus?.(message.type.includes("user") ? "正在听你说话..." : "AI 正在回应...");
+      onStatus?.(message.type.includes("user") ? "正在听你说话..." : "对方正在回应...");
       onEvent?.(eventName, { ...event, uiSignal: message.type.includes("user") ? "user_speaking" : "ai_speaking" });
     }
 
