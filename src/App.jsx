@@ -1122,7 +1122,9 @@ export default function AISocialSkillsPlatform() {
     const current = voiceMessagesRef.current;
     const last = current[current.length - 1];
     if (last?.sender === message.sender && last?.text === text) return;
-    if (message.sender === "caller" && isRepeatOfRecentUser(text, current)) return;
+    // Only suppress duplicate user transcripts. An assistant reply often
+    // repeats short words such as "好的" or "可以", which must not be dropped.
+    if (message.sender === "me" && isRepeatOfRecentUser(text, current)) return;
 
     const next = [...current, { sender: message.sender, text }];
     voiceMessagesRef.current = next;
@@ -1406,8 +1408,6 @@ export default function AISocialSkillsPlatform() {
           }
         },
         onAssistantText: (message) => {
-          if (isRepeatOfRecentUser(message.text)) return;
-
           setVoiceStatus(message.isFinal ? "可以继续说话" : "对方正在回应...");
           setVoiceAiSpeaking(!message.isFinal);
 
