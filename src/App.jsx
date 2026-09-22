@@ -561,6 +561,7 @@ export default function AISocialSkillsPlatform() {
     suggestion: "",
   });
   const [chatLoading, setChatLoading] = useState(false);
+  const [chatNotice, setChatNotice] = useState("");
   const [assistLoading, setAssistLoading] = useState(false);
   const [suggestionLoading, setSuggestionLoading] = useState(false);
 
@@ -624,23 +625,37 @@ export default function AISocialSkillsPlatform() {
     const text = String(message || "");
 
     if (text.includes("4028") || text.includes("Insufficient coze credits balance")) {
-      return "语音通话暂时没有接通，请稍后再试。";
+      return "扣子实时语音额度不足，语音识别可能正常，但无法生成下一句回复。";
     }
 
     if (text.includes("4052") || text.includes("s2s feature is not enabled")) {
-      return "语音通话暂时没有接通，请稍后再试。";
+      return "当前扣子 Bot 未开通实时语音对话（S2S）能力。";
     }
 
     if (text.includes("4100") || text.includes("authentication is invalid")) {
-      return "语音通话暂时没有接通，请稍后再试。";
+      return "扣子实时语音鉴权失败，请检查当前 Token、Bot ID 和发布状态。";
     }
 
-    return "语音通话暂时没有接通，请稍后再试。";
+    if (text.includes("4101") || text.includes("permission")) {
+      return "当前 Token 没有调用这个扣子 Bot 或实时语音能力的权限。";
+    }
+
+    return text && text !== "实时语音连接出错"
+      ? `扣子语音服务返回：${text}`
+      : "扣子没有生成下一句回复，请检查 Bot 状态和实时语音配置。";
   }
 
-  function commitVoiceTranscript(text) {
+  async function commitVoiceTranscript(text) {
     const finalText = String(text || "").trim();
     if (!finalText) return;
+
+    try {
+      await checkUserContent(finalText);
+    } catch (error) {
+      setVoiceFeedback(error.message);
+      setVoiceWaiting(false);
+      return;
+    }
 
     pushVoiceMessage({ sender: "me", text: finalText });
     setVoiceInput("");
@@ -775,10 +790,15 @@ export default function AISocialSkillsPlatform() {
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "记录保存失败");
+      if (!res.ok) {
+        const error = new Error(data?.message || data?.detail || data?.error || "记录保存失败");
+        error.code = data?.code;
+        throw error;
+      }
       return data.session || null;
     } catch (error) {
-      pushHistoryItem(localItem);
+      // Do not write blocked content to localStorage as a fallback.
+      if (error?.code !== "CONTENT_BLOCKED") pushHistoryItem(localItem);
       throw error;
     }
   }
@@ -901,9 +921,27 @@ export default function AISocialSkillsPlatform() {
     setActiveTab("train");
   }
 
+  async function checkUserContent(text) {
+    const res = await fetch(`${API_BASE}/api/moderation/check`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.message || "这段内容暂时不能提交，请换一种表达后再试。");
+  }
+
   async function sendMessage() {
     const text = input.trim();
     if (!text || chatLoading) return;
+
+    setChatNotice("");
+    try {
+      await checkUserContent(text);
+    } catch (error) {
+      setChatNotice(error.message);
+      return;
+    }
 
     const userMessage = { sender: "me", text };
     const nextMessages = [...messages, userMessage];
@@ -939,8 +977,8 @@ export default function AISocialSkillsPlatform() {
       const chatData = await chatRes.json();
       const scoreData = await scoreRes.json();
 
-      if (!chatRes.ok) throw new Error(chatData?.detail || chatData?.error || "聊天失败");
-      if (!scoreRes.ok) throw new Error(scoreData?.detail || scoreData?.error || "评分失败");
+      if (!chatRes.ok) throw new Error(chatData?.message || chatData?.detail || chatData?.error || "聊天失败");
+      if (!scoreRes.ok) throw new Error(scoreData?.message || scoreData?.detail || scoreData?.error || "评分失败");
 
       setMessages((prev) => [...prev, { sender: "other", text: chatData.reply || "我明白你的意思了。" }]);
       const finalMessages = [...nextMessages, { sender: "other", text: chatData.reply || "" }];
@@ -1022,6 +1060,12 @@ export default function AISocialSkillsPlatform() {
   async function improveAssist() {
     const text = assistInput.trim();
     if (!text || assistLoading) return;
+    try {
+      await checkUserContent(text);
+    } catch (error) {
+      setChatNotice(error.message);
+      return;
+    }
     setAssistLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/assist`, {
@@ -1030,7 +1074,7 @@ export default function AISocialSkillsPlatform() {
         body: JSON.stringify({ text }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.detail || data?.error || "润色失败");
+      if (!res.ok) throw new Error(data?.message || data?.detail || data?.error || "润色失败");
       setAssistOutput(data);
     } catch (error) {
       setAssistOutput({ natural: `出错了：${error.message}`, polite: "", short: "" });
@@ -1124,7 +1168,7 @@ export default function AISocialSkillsPlatform() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.detail || data?.error || "反馈失败");
+      if (!res.ok) throw new Error(data?.message || data?.detail || data?.error || "反馈失败");
 
       setVoiceLastScore(data.score ?? null);
       setVoiceSocialScores({
@@ -1194,7 +1238,7 @@ export default function AISocialSkillsPlatform() {
           setVoiceFeedback("本次未检测到有效语音回应，未生成评分或保存记录。");
           return;
         }
-        throw new Error(data?.detail || data?.error || "总结失败");
+        throw new Error(data?.message || data?.detail || data?.error || "总结失败");
       }
 
       setVoiceSummary(data);
@@ -1455,6 +1499,13 @@ export default function AISocialSkillsPlatform() {
   async function sendVoiceReply() {
     const text = voiceInput.trim();
     if (!text) return;
+
+    try {
+      await checkUserContent(text);
+    } catch (error) {
+      setVoiceFeedback(error.message);
+      return;
+    }
 
     if (voiceSessionRef.current?.sendText) {
       pushVoiceMessage({ sender: "me", text });
@@ -1748,7 +1799,8 @@ export default function AISocialSkillsPlatform() {
                   {chatLoading && <div style={styles.bubble(false)}>正在思考中…</div>}
                 </div>
                 <div style={{ marginTop: "14px" }}>
-                  <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder="你会怎么回？" style={{ ...styles.input, minHeight: "90px" }} />
+                  <textarea value={input} onChange={(e) => { setInput(e.target.value); setChatNotice(""); }} placeholder="你会怎么回？" style={{ ...styles.input, minHeight: "90px" }} />
+                  {chatNotice && <div style={{ color: "#c54b5b", marginTop: "8px", lineHeight: 1.6 }}>{chatNotice}</div>}
                   <div style={{ display: "flex", gap: "10px", marginTop: "12px", flexWrap: "wrap" }}>
                     <button style={styles.primaryBtn} onClick={sendMessage}>发送</button>
                   </div>
@@ -1780,7 +1832,8 @@ export default function AISocialSkillsPlatform() {
               <div style={styles.sectionTitle}>表达辅助</div>
               <h2 style={{ marginTop: 0 }}>把想说的话整理得更自然</h2>
               <p style={{ color: "#60708f", lineHeight: 1.8 }}>输入一句你想说的话，系统会给出几种更清楚、更礼貌的表达。</p>
-              <textarea value={assistInput} onChange={(e) => setAssistInput(e.target.value)} placeholder="例如：老师这题我不会 / 我也想一起去" style={{ ...styles.input, minHeight: "120px" }} />
+              <textarea value={assistInput} onChange={(e) => { setAssistInput(e.target.value); setChatNotice(""); }} placeholder="例如：老师这题我不会 / 我也想一起去" style={{ ...styles.input, minHeight: "120px" }} />
+              {chatNotice && <div style={{ color: "#c54b5b", marginTop: "8px", lineHeight: 1.6 }}>{chatNotice}</div>}
               <div style={{ display: "flex", gap: "10px", marginTop: "12px" }}>
                 <button style={styles.primaryBtn} onClick={improveAssist}>{assistLoading ? "生成中..." : "生成建议"}</button>
                 <button style={styles.secondaryBtn} onClick={() => setAssistInput("")}>清空</button>

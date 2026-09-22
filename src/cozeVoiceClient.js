@@ -26,12 +26,21 @@ function pickText(event) {
     event.transcript,
     event.content,
     event.delta,
+    event.message,
+    event.error?.message,
+    event.error?.msg,
+    event.msg,
+    event.payload,
     event.message?.content,
     event.message?.text,
     event.data?.text,
     event.data?.transcript,
     event.data?.content,
     event.data?.delta,
+    event.data?.message,
+    event.data?.error?.message,
+    event.data?.msg,
+    event.data?.last_error?.msg,
     event.data?.message?.content,
     event.data?.message?.text,
   ];
@@ -45,7 +54,7 @@ function pickText(event) {
 }
 
 function readEventType(eventName, event) {
-  return String(event?.event_type || eventName || "");
+  return `${String(eventName || "")} ${String(event?.event_type || "")}`.trim().toLowerCase();
 }
 
 function readRole(event) {
@@ -136,6 +145,19 @@ export async function createCozeVoiceSession({
 
   client.on(EventNames.ALL_SERVER, (eventName, event) => {
     onEvent?.(eventName, event);
+
+    const eventType = readEventType(eventName, event);
+    if (eventType.includes("server.error") || eventType.includes("chat.failed") || eventType.endsWith(" error")) {
+      onError?.(
+        pickText(event) ||
+          event?.message ||
+          event?.error?.message ||
+          event?.data?.message ||
+          event?.data?.last_error?.msg ||
+          "扣子未能生成下一句回复",
+      );
+      return;
+    }
 
     const message = makeMessageEvent(eventName, event);
 

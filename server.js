@@ -13,8 +13,9 @@ import { fileURLToPath } from "node:url";
 dotenv.config();
 
 const app = express();
+app.set("trust proxy", 1);
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "256kb" }));
 
 const port = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || "yuyi-dev-secret";
@@ -224,6 +225,58 @@ const STRUCTURED_SCORE_RULES = `
 6. 输出必须是合法 JSON，不要 markdown，不要额外解释。
 `;
 
+// Keep this list conservative: block clear abuse without treating ordinary
+// frustration, disagreement, or emotional descriptions as violations.
+const BLOCKED_TERMS = [
+  "傻逼", "傻比", "沙比", "煞笔", "煞逼", "他妈的", "妈的", "你妈",
+  "草泥马", "操你", "狗东西", "废物", "弱智", "脑残", "王八蛋", "垃圾",
+  "fuck", "shit", "bitch", "asshole",
+];
+const moderationAttempts = new Map();
+
+function moderationText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[\s\u200b\u200c\u200d\ufeff]+/g, "")
+    .replace(/[，。！？、,.!?;；:：~～*_`'"“”‘’()[\\]{}<>《》]/g, "");
+}
+
+function hasBlockedTerm(value) {
+  const normalized = moderationText(value);
+  return BLOCKED_TERMS.some((term) => normalized.includes(moderationText(term)));
+}
+
+function moderationKey(req) {
+  return req.ip || req.socket?.remoteAddress || "unknown";
+}
+
+function rejectBlockedContent(req, res, values) {
+  const text = Array.isArray(values) ? values.filter(Boolean).join("\n") : values;
+  if (!hasBlockedTerm(text)) return false;
+
+  const key = moderationKey(req);
+  const now = Date.now();
+  const previous = moderationAttempts.get(key) || { count: 0, since: now };
+  const record = now - previous.since > 10 * 60 * 1000
+    ? { count: 1, since: now }
+    : { count: previous.count + 1, since: previous.since };
+  moderationAttempts.set(key, record);
+
+  const repeated = record.count >= 4;
+  return res.status(repeated ? 429 : 422).json({
+    code: "CONTENT_BLOCKED",
+    error: "CONTENT_BLOCKED",
+    message: repeated
+      ? "提交过于频繁，请稍后再试。"
+      : "这段内容暂时不能提交，请换一种表达后再试。",
+  });
+}
+
+app.post("/api/moderation/check", (req, res) => {
+  if (rejectBlockedContent(req, res, req.body?.text)) return;
+  res.json({ ok: true });
+});
+
 app.get("/", (req, res) => {
   res.send("backend is running");
 });
@@ -259,6 +312,7 @@ app.post("/api/voice/feedback", async (req, res) => {
     if (!sceneTitle || !userReply) {
       return res.status(400).json({ error: "missing sceneTitle or userReply" });
     }
+    if (rejectBlockedContent(req, res, userReply)) return;
 
     const completion = await client.chat.completions.create({
       model: process.env.OPENAI_MODEL,
@@ -349,6 +403,7 @@ app.post("/api/voice/summary", async (req, res) => {
         message: "未检测到有效的用户语音回应，不生成评分或通话记录。",
       });
     }
+    if (rejectBlockedContent(req, res, userMessages.map((message) => message.text))) return;
 
     const transcript = messages
       .map((m) => `${m.sender === "me" ? "用户" : "AI"}：${m.text}`)
@@ -439,6 +494,7 @@ app.post("/api/voice/suggestion", async (req, res) => {
       .slice(-6)
       .map((m) => `${m.sender === "me" ? "用户" : "AI"}：${m.text}`)
       .join("\n");
+    if (rejectBlockedContent(req, res, (messages || []).filter((m) => m?.sender === "me").map((m) => m.text))) return;
 
     const completion = await client.chat.completions.create({
       model: process.env.OPENAI_MODEL,
@@ -479,6 +535,7 @@ app.post("/api/chat", async (req, res) => {
     if (!sceneTitle || !starter || !Array.isArray(messages)) {
       return res.status(400).json({ error: "参数不完整" });
     }
+    if (rejectBlockedContent(req, res, messages.filter((m) => m?.sender === "me").map((m) => m.text))) return;
 
     const systemPrompt = `
 你是“语依”系统中的标准化互动角色。
@@ -536,6 +593,7 @@ app.post("/api/assist", async (req, res) => {
     if (!text || !text.trim()) {
       return res.status(400).json({ error: "请输入内容" });
     }
+    if (rejectBlockedContent(req, res, text)) return;
 
     const prompt = `
 你是“语依”的表达练习辅助工具。
@@ -594,6 +652,7 @@ app.post("/api/score", async (req, res) => {
     if (!sceneTitle || !userReply) {
       return res.status(400).json({ error: "参数不完整" });
     }
+    if (rejectBlockedContent(req, res, userReply)) return;
 
     const prompt = `
 你是“语依”系统中的社会技能行为编码与辅助评分模块。
@@ -686,6 +745,7 @@ app.post("/api/suggest", async (req, res) => {
     if (!sceneTitle || !sceneHint || !starter) {
       return res.status(400).json({ error: "参数不完整" });
     }
+    if (rejectBlockedContent(req, res, (messages || []).filter((m) => m?.sender === "me").map((m) => m.text))) return;
 
     const formattedMessages = (messages || []).map((m) => ({
       role: m.sender === "me" ? "user" : "assistant",
@@ -921,6 +981,10 @@ app.post("/api/student/session", (req, res) => {
   const user = getAuthUser(req);
   if (!user || user.role !== "student") return res.status(401).json({ error: "未授权" });
   const { module, moduleName, score, duration, summary, scene, dimensions, evidence, strength, supportNeed, comment, suggestion, transcript, turnFeedback } = req.body || {};
+  if (rejectBlockedContent(req, res, [
+    ...(Array.isArray(transcript) ? transcript.filter((item) => item?.sender === "me").map((item) => item.text) : []),
+    ...(Array.isArray(turnFeedback) ? turnFeedback.filter((item) => item?.sender === "me").map((item) => item.text) : []),
+  ])) return;
   const session = {
     id: crypto.randomBytes(8).toString("hex"),
     studentId: user.id,
