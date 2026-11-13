@@ -10,6 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { sanitizeModelText } from "./shared/modelText.js";
+import { beijingDateKey, beijingDateTime } from "./shared/time.js";
 
 dotenv.config();
 
@@ -138,7 +139,7 @@ function normalizeTurnFeedback(items) {
 function sessionsFromLatestDates(sessions, dateCount = 3) {
   const dates = [];
   return sessions.filter((session) => {
-    const date = session.timestamp ? session.timestamp.slice(0, 10) : "未标注日期";
+    const date = beijingDateKey(session.timestamp);
     if (!dates.includes(date) && dates.length < dateCount) dates.push(date);
     return dates.includes(date);
   });
@@ -1067,7 +1068,7 @@ app.get("/api/teacher/students", (req, res) => {
       totalSessions: sSessions.length,
       avgScore,
       trend: trend !== null ? (trend >= 0 ? `+${trend}` : `${trend}`) : null,
-      lastSession: sorted[0]?.timestamp ? sorted[0].timestamp.slice(0, 10) : null,
+      lastSession: sorted[0]?.timestamp ? beijingDateKey(sorted[0].timestamp) : null,
       noteCount: NOTES.filter((n) => n.studentId === s.id).length,
     };
   });
@@ -1133,7 +1134,7 @@ app.post("/api/teacher/note", async (req, res) => {
           const dimensionText = s.dimensions && Object.keys(s.dimensions).length
             ? `；维度分：${Object.entries(s.dimensions).map(([key, value]) => `${key}:${value}`).join("，")}`
             : "";
-          return `${s.timestamp?.slice(0, 10) || ""} ${s.moduleName || s.module || "测评"}·${s.scene || "未命名情境"} ${s.score}分：${s.summary || "暂无摘要"}${dimensionText}`;
+          return `${beijingDateTime(s.timestamp) || ""} ${s.moduleName || s.module || "测评"}·${s.scene || "未命名情境"} ${s.score}分：${s.summary || "暂无摘要"}${dimensionText}`;
         }).join("\n")
       : "暂无近期会话记录";
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { API_BASE } from "./config";
+import { beijingDateKey, beijingTime } from "../shared/time.js";
 
 const navs = [
   { key: "students", label: "学员列表" },
@@ -29,7 +30,7 @@ function recentDateModuleGroups(records, maxDates = 3) {
   const dates = [];
   const dateGroups = {};
   records.forEach((record) => {
-    const date = record.timestamp ? record.timestamp.slice(0, 10) : "未标注日期";
+    const date = beijingDateKey(record.timestamp);
     if (!dates.includes(date) && dates.length < maxDates) dates.push(date);
     if (!dates.includes(date)) return;
 
@@ -402,7 +403,7 @@ export default function TeacherApp() {
                                 <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "14px", alignItems: "center" }}>
                                   <div style={{ minWidth: 0 }}>
                                     <div style={{ fontWeight: 800 }}>{moduleGroup.moduleName}{moduleGroup.scene ? ` · ${moduleGroup.scene}` : ""}</div>
-                                    <div style={{ color: "#7584a3", fontSize: "13px", marginTop: "4px" }}>{moduleGroup.sessions.length} 次互动 · 最新 {latest?.timestamp?.slice(11, 16) || "时间未标注"}</div>
+                                    <div style={{ color: "#7584a3", fontSize: "13px", marginTop: "4px" }}>{moduleGroup.sessions.length} 次互动 · 最新 {beijingTime(latest?.timestamp)}</div>
                                   </div>
                                   <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
                                     <strong style={{ color: "#22a06b", fontSize: "20px", whiteSpace: "nowrap" }}>{moduleGroup.averageScore} 分</strong>
@@ -503,7 +504,7 @@ export default function TeacherApp() {
                   <div key={idx} style={{ borderBottom: idx < savedNotes.length - 1 ? "1px solid #edf1f7" : "none", paddingBottom: "16px", marginBottom: "16px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
                       <div style={{ fontWeight: 700, color: "#22a06b" }}>{note.teacherName}</div>
-                      <div style={{ fontSize: "13px", color: "#7584a3" }}>{note.timestamp?.slice(0, 10)}</div>
+                      <div style={{ fontSize: "13px", color: "#7584a3" }}>{beijingDateKey(note.timestamp, "时间未标注")}</div>
                     </div>
                     {note.observation && <div style={{ color: "#7584a3", fontSize: "13px", marginBottom: "8px" }}>观察：{note.observation}</div>}
                     <div style={{ background: "#e8f8f1", borderRadius: "12px", padding: "12px", lineHeight: 1.7, marginBottom: "8px" }}>{note.suggestion}</div>

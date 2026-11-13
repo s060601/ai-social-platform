@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { API_BASE } from "./config";
 import { sanitizeModelText } from "../shared/modelText.js";
+import { beijingDateKey, beijingTime } from "../shared/time.js";
 
 const scenes = [
   {
@@ -282,7 +283,7 @@ function recentDateModuleGroups(records, maxDates = 3) {
   const groupedByDate = {};
 
   records.forEach((record) => {
-    const date = record.timestamp ? record.timestamp.slice(0, 10) : "未标注日期";
+    const date = beijingDateKey(record.timestamp);
     if (!dates.includes(date) && dates.length < maxDates) dates.push(date);
     if (!dates.includes(date)) return;
 
@@ -2289,7 +2290,7 @@ export default function AISocialSkillsPlatform() {
                               <div style={{ minWidth: 0 }}>
                                 <div style={{ fontWeight: 800 }}>{moduleGroup.moduleName} · {moduleGroup.sceneName}</div>
                                 <div style={{ color: "#7584a3", fontSize: "13px", marginTop: "4px" }}>
-                                  当天 {practiceAttempts.length} 次完整练习 · 最近一次 {latestSession.timestamp?.slice(11, 16) || "时间未标注"}
+                                  当天 {practiceAttempts.length} 次完整练习 · 最近一次 {beijingTime(latestSession.timestamp)}
                                 </div>
                               </div>
                               <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
@@ -2322,7 +2323,7 @@ export default function AISocialSkillsPlatform() {
                                       }}
                                     >
                                       <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", color: "#60708f", fontSize: "14px", fontWeight: 700 }}>
-                                        <span>{item.timestamp?.slice(11, 16) || "时间未标注"}</span>
+                                        <span>{beijingTime(item.timestamp)}</span>
                                         <span style={{ color: "#4f7cff" }}>{item.score} 分</span>
                                       </div>
                                       {transcript.length ? transcript.map((turn, turnIndex) => {
