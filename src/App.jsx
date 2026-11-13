@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { API_BASE } from "./config";
+import { sanitizeModelText } from "../shared/modelText.js";
 
 const scenes = [
   {
@@ -9,7 +10,7 @@ const scenes = [
     subtitle: "校园学习场景",
     role: "班主任",
     roleStyle: "你是班主任。先礼貌地叫住学生确认情况，不把忘交作业说成指责；学生说明后，用日常口吻回应，再自然询问下一步安排。",
-    setting: "课间，老师发现你今天的作业还没有交，叫住你确认情况。",
+    setting: "周一课间，数学作业应在第一节课前交。你把作业忘在家里，最快下午放学后能补交。",
     hint: "测评情境理解、责任说明、礼貌表达、对话维持和问题解决",
     target: "观察学员能否理解老师意图，并说明作业状态、困难与补救安排。",
     starter: "同学，方便耽误你一分钟吗？今天的作业我这里还没收到。",
@@ -22,7 +23,7 @@ const scenes = [
     subtitle: "同伴交往场景",
     role: "同学小南",
     roleStyle: "你是同龄同学小南。你在放学后约对方周末一起出去，语气轻松自然；根据对方的意愿顺着聊时间、地点或其他安排。",
-    setting: "放学后，同学在教室门口约你周末一起出去。",
+    setting: "周五放学后，小南约你周六下午两点在学校东门集合，一起去附近公园。你需要决定是否参加。",
     hint: "测评回应邀请、表达意愿、协商细节和主动延续",
     target: "观察学员能否在同伴邀请中表达意愿、询问安排并保持自然交流。",
     starter: "周六下午我们打算去公园，你要一起吗？",
@@ -31,15 +32,15 @@ const scenes = [
   },
   {
     id: 3,
-    title: "向老师请求帮助",
+    title: "向老师确认作业安排",
     subtitle: "校园学习场景",
     role: "数学老师",
-    roleStyle: "你是数学老师。发现学生做题卡住时，主动上前问一句；不催促、不直接给答案，先听学生说清哪里卡住。",
-    setting: "做题时你停住了，老师走过来看了一眼。",
-    hint: "测评清楚表达困难、提出请求和回应老师追问",
-    target: "观察学员能否具体说明卡住的位置，并用适切方式请求支持。",
-    starter: "这道题卡住了吗？要不要先说说你做到哪一步了？",
-    expected: ["说出遇到的具体困难", "提出明确帮助请求", "回应老师的澄清问题"],
+    roleStyle: "你是数学老师。学生来确认今天作业的要求；你只围绕已经说出的作业安排回答，不虚构题目内容、页码或额外任务。",
+    setting: "放学前，老师说数学作业在练习册第 18 页。你想确认具体题号，以及是不是明天早上交。",
+    hint: "测评清楚提问、确认关键信息和礼貌结束对话",
+    target: "观察学员能否向老师明确询问作业要求，并复述或确认下一步安排。",
+    starter: "老师，我想确认一下今天的数学作业。请把练习册第 18 页第 1 到第 4 题完成，明天早上交。你还有哪里不清楚吗？",
+    expected: ["围绕已呈现的作业安排提问", "确认页码、题号或提交时间", "礼貌结束对话"],
     indicators: ["情境理解", "社会语用", "问题解决"],
   },
   {
@@ -48,7 +49,7 @@ const scenes = [
     subtitle: "家庭沟通场景",
     role: "妈妈",
     roleStyle: "你是放学后等孩子回家的妈妈。语气关心但不责备；先确认人是否安全、在哪里，再一起商量怎么回家。",
-    setting: "放学后，家长到校门口接你，却一时没看见你。",
+    setting: "放学后，妈妈在学校南门等你。你还在三楼教室收拾书包，大约五分钟后能下楼。",
     hint: "测评家庭沟通中的原因说明、需求表达和协商能力",
     target: "观察学员能否向家长说明计划变动，并协商下一步安排。",
     starter: "我到学校门口了，没看到你，就打电话问问。你现在是在教室，还是已经出来了？",
@@ -61,7 +62,7 @@ const scenes = [
     subtitle: "情绪支持场景",
     role: "朋友小雨",
     roleStyle: "你是同龄朋友小雨。你今天心情不好，但不强迫对方安慰；对方愿意听时，再自然说一点自己的感受。",
-    setting: "朋友私下跟你说今天心情不好。",
+    setting: "午休后，小雨在走廊找你。她和同学做分组作业时发生误会，觉得对方不愿意和她一组。",
     hint: "测评情绪识别、共情回应和继续倾听",
     target: "观察学员能否识别对方情绪，并用支持性语言邀请对方表达。",
     starter: "我今天有点烦，不太想说话。",
@@ -74,7 +75,7 @@ const scenes = [
     subtitle: "网络交流场景",
     role: "同学小周",
     roleStyle: "你是同龄同学小周，在私聊里约对方周末义卖时一起负责收款。语气像真实聊天，不像公告；根据对方回复确认是否方便和具体安排。",
-    setting: "放学回家后，你用电脑查看班级群里的周末义卖安排。同学私聊你，想和你一起负责收款。",
+    setting: "周六上午班级在操场举行义卖。你和小周都报名了收款志愿，他想和你一起负责收款台。",
     hint: "测评线上表达的清晰度、边界感和社会规范",
     target: "观察学员能否在私聊中清楚表达意愿、确认安排并保持自然交流。",
     starter: "我刚在群里看到你也报了周末的义卖。要不要咱俩一起负责收款？",
@@ -89,6 +90,7 @@ const voiceScenarios = [
     title: "老师来电询问缺勤",
     subtitle: "缺勤情况电话",
     caller: "班主任",
+    setting: "周一早上，你因发烧在家休息，家长已经知道情况。班主任来电确认今天是否需要请假。",
     opening: "同学，你今天没来上课，是什么情况呀？",
     hint: "测评电话中说明情况、回应关心和补充必要信息",
     sample: "老师，家里知道。我今天身体不太舒服，已经和家长说过了。",
@@ -99,6 +101,7 @@ const voiceScenarios = [
     title: "同学打电话借笔记",
     subtitle: "同伴求助电话",
     caller: "同学小林",
+    setting: "课后，小林漏记了昨天数学课“分数应用题”的笔记，想拍下来补全。你的笔记在手边。",
     opening: "你数学笔记能借我拍一下吗？我昨天那页没记全。",
     hint: "练习回应同伴请求、说明是否方便和协商方式",
     sample: "可以，我等会儿拍给你。你是要昨天讲例题那一页吗？",
@@ -109,6 +112,7 @@ const voiceScenarios = [
     title: "家长来电接你放学",
     subtitle: "放学接送电话",
     caller: "家长",
+    setting: "放学后，家长在学校南门等你。你还在三楼教室收拾书包，预计五分钟后出来。",
     opening: "我到校门口啦，你还在教室吗？不着急，收拾好了跟我说一声，我在这儿等你。",
     hint: "练习说明当前位置、预计时间和临时安排",
     sample: "我还在教室收书包，大概五分钟后出来。",
@@ -119,6 +123,7 @@ const voiceScenarios = [
     title: "服务台确认位置",
     subtitle: "公共场所电话",
     caller: "服务台工作人员",
+    setting: "周六班级参观市科技馆时，你在二层“未来城市”展区和老师走散。服务台在一层入口旁。",
     opening: "你好，我是服务台的小周。老师说你可能在找集合点，你现在附近有什么明显的地方吗？",
     hint: "测评公共情境中的问题描述、求助表达和信息补充",
     sample: "您好，我找不到集合地点了。我现在在一楼入口，能请您告诉我怎么走吗？",
@@ -129,6 +134,7 @@ const voiceScenarios = [
     title: "朋友打电话倾诉",
     subtitle: "情绪支持电话",
     caller: "朋友小雨",
+    setting: "晚上，小雨和同学约好一起做海报，却被误会成不想合作。她心里很堵，打电话想找你说说。",
     opening: "你现在方便说几句吗？我刚才和同学闹别扭了，心里挺堵的。",
     hint: "测评情绪识别、共情回应和继续倾听",
     sample: "听起来你今天真的很难受。我愿意听你说，发生什么了？",
@@ -139,6 +145,7 @@ const voiceScenarios = [
     title: "同学来电约同行",
     subtitle: "活动安排电话",
     caller: "同学小周",
+    setting: "明天下午两点学校有义卖活动。你和小周都参加，他想约你一点半在学校东门一起出发。",
     opening: "喂，你现在方便说话吗？明天下午的活动我也去，咱们要不要一起过去？",
     hint: "练习回应同伴邀请、确认时间地点和协商出行安排",
     sample: "可以呀。我从学校门口过去，你想几点碰面？",
@@ -562,6 +569,7 @@ export default function AISocialSkillsPlatform() {
   });
   const [chatLoading, setChatLoading] = useState(false);
   const [chatNotice, setChatNotice] = useState("");
+  const [textInteractionEnded, setTextInteractionEnded] = useState(false);
   const [assistLoading, setAssistLoading] = useState(false);
   const [suggestionLoading, setSuggestionLoading] = useState(false);
 
@@ -575,6 +583,8 @@ export default function AISocialSkillsPlatform() {
   const voiceMessagesRef = useRef([]);
   const voiceTurnFeedbackRef = useRef([]);
   const voiceTranscriptTimerRef = useRef(null);
+  const voiceAiSpeakingRef = useRef(false);
+  const voiceMicOnRef = useRef(true);
   const [voiceLiveMessages, setVoiceLiveMessages] = useState([]);
   const [voiceMicOn, setVoiceMicOn] = useState(true);
   const [voiceError, setVoiceError] = useState("");
@@ -620,6 +630,24 @@ export default function AISocialSkillsPlatform() {
         return current === userText || current.includes(userText) || userText.includes(current);
       });
   }
+
+  function isEchoOfRecentCaller(text, messages = voiceMessagesRef.current) {
+    const current = simplifyVoiceText(text);
+    if (current.length < 5) return false;
+
+    return messages
+      .slice(-4)
+      .some((item) => {
+        if (item.sender !== "caller") return false;
+        const callerText = simplifyVoiceText(item.text);
+        if (callerText.length < 5) return false;
+        return current === callerText || current.includes(callerText) || callerText.includes(current);
+      });
+  }
+
+  useEffect(() => {
+    voiceMicOnRef.current = voiceMicOn;
+  }, [voiceMicOn]);
 
   function formatVoiceError(message) {
     const text = String(message || "");
@@ -918,6 +946,7 @@ export default function AISocialSkillsPlatform() {
     setMessages([{ sender: "other", text: scene.starter }]);
     setInput("");
     setAssessmentCompleted(false);
+    setTextInteractionEnded(false);
     setActiveTab("train");
   }
 
@@ -933,7 +962,7 @@ export default function AISocialSkillsPlatform() {
 
   async function sendMessage() {
     const text = input.trim();
-    if (!text || chatLoading) return;
+    if (!text || chatLoading || textInteractionEnded) return;
 
     setChatNotice("");
     try {
@@ -958,6 +987,7 @@ export default function AISocialSkillsPlatform() {
             sceneTitle: currentScene.title,
             sceneRole: currentScene.role,
             sceneRoleStyle: currentScene.roleStyle,
+            sceneSetting: currentScene.setting,
             sceneHint: currentScene.hint,
             starter: currentScene.starter,
             messages: nextMessages,
@@ -968,6 +998,7 @@ export default function AISocialSkillsPlatform() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             sceneTitle: currentScene.title,
+            sceneSetting: currentScene.setting,
             sceneHint: currentScene.hint,
             userReply: text,
           }),
@@ -980,8 +1011,9 @@ export default function AISocialSkillsPlatform() {
       if (!chatRes.ok) throw new Error(chatData?.message || chatData?.detail || chatData?.error || "聊天失败");
       if (!scoreRes.ok) throw new Error(scoreData?.message || scoreData?.detail || scoreData?.error || "评分失败");
 
-      setMessages((prev) => [...prev, { sender: "other", text: chatData.reply || "我明白你的意思了。" }]);
-      const finalMessages = [...nextMessages, { sender: "other", text: chatData.reply || "" }];
+      const reply = sanitizeModelText(chatData.reply) || "我明白你的意思了。";
+      setMessages((prev) => [...prev, { sender: "other", text: reply }]);
+      const finalMessages = [...nextMessages, { sender: "other", text: reply }];
       setAssessmentCompleted(true);
       setLastScore(scoreData.score || 0);
       setScoreDetail({
@@ -1057,6 +1089,19 @@ export default function AISocialSkillsPlatform() {
     }
   }
 
+  function endTextInteraction() {
+    if (chatLoading) return;
+
+    const hasUserResponse = messages.some((message) => message?.sender === "me" && String(message.text || "").trim());
+    setTextInteractionEnded(true);
+    setInput("");
+    setChatNotice(
+      hasUserResponse
+        ? "本次练习已结束，已保留本轮已生成的记录。"
+        : "本次练习已结束。未提交回应，因此不会生成新的练习记录。",
+    );
+  }
+
   async function improveAssist() {
     const text = assistInput.trim();
     if (!text || assistLoading) return;
@@ -1084,7 +1129,7 @@ export default function AISocialSkillsPlatform() {
   }
 
   async function generateLiveSuggestion() {
-  if (suggestionLoading) return;
+  if (suggestionLoading || textInteractionEnded) return;
   setSuggestionLoading(true);
 
   try {
@@ -1095,6 +1140,8 @@ export default function AISocialSkillsPlatform() {
       },
       body: JSON.stringify({
         sceneTitle: currentScene.title,
+        sceneRole: currentScene.role,
+        sceneSetting: currentScene.setting,
         sceneHint: currentScene.hint,
         starter: currentScene.starter,
         messages,
@@ -1116,9 +1163,8 @@ export default function AISocialSkillsPlatform() {
 }
 
   function pushVoiceMessage(message) {
-    if (!message?.text?.trim()) return;
-
-    const text = message.text.trim();
+    const text = sanitizeModelText(message?.text);
+    if (!text) return;
     const current = voiceMessagesRef.current;
     const last = current[current.length - 1];
     if (last?.sender === message.sender && last?.text === text) return;
@@ -1165,6 +1211,7 @@ export default function AISocialSkillsPlatform() {
         body: JSON.stringify({
           sceneTitle: currentVoice.title,
           sceneRole: currentVoice.caller,
+            sceneSetting: currentVoice.setting,
           sceneHint: currentVoice.hint,
           userReply: text,
         }),
@@ -1228,6 +1275,7 @@ export default function AISocialSkillsPlatform() {
         body: JSON.stringify({
           sceneTitle: currentVoice.title,
           sceneRole: currentVoice.caller,
+            sceneSetting: currentVoice.setting,
           sceneHint: currentVoice.hint,
           messages: messagesForSummary,
         }),
@@ -1309,6 +1357,7 @@ export default function AISocialSkillsPlatform() {
         body: JSON.stringify({
           sceneTitle: currentVoice.title,
           sceneRole: currentVoice.caller,
+            sceneSetting: currentVoice.setting,
           sceneHint: currentVoice.hint,
           messages: voiceMessagesRef.current,
         }),
@@ -1398,6 +1447,14 @@ export default function AISocialSkillsPlatform() {
         prologueContent: currentVoice.opening,
         onStatus: setVoiceStatus,
         onTranscript: (message) => {
+          // Ignore the agent's audio when it leaks back through a device microphone.
+          if (voiceAiSpeakingRef.current || isEchoOfRecentCaller(message.text)) {
+            if (message.isFinal) {
+              setVoiceMicDiagnostic("已忽略疑似对方播报回声，不计入你的通话记录。");
+            }
+            return;
+          }
+
           setVoicePartialText(message.text);
           setVoicePartialSender("me");
           setVoiceStatus(message.isFinal ? "已听到，等待回应..." : "正在听你说话...");
@@ -1408,6 +1465,7 @@ export default function AISocialSkillsPlatform() {
           }
         },
         onAssistantText: (message) => {
+          if (!message.isFinal) voiceAiSpeakingRef.current = true;
           setVoiceStatus(message.isFinal ? "可以继续说话" : "对方正在回应...");
           setVoiceAiSpeaking(!message.isFinal);
 
@@ -1442,10 +1500,14 @@ export default function AISocialSkillsPlatform() {
             setVoiceWaiting(true);
           }
           if (event?.uiSignal === "ai_speaking") {
+            voiceAiSpeakingRef.current = true;
+            voiceSessionRef.current?.setMicrophone(false);
             setVoiceAiSpeaking(true);
             setVoiceWaiting(false);
           }
           if (event?.uiSignal === "ai_stopped") {
+            voiceAiSpeakingRef.current = false;
+            if (voiceMicOnRef.current) voiceSessionRef.current?.setMicrophone(true);
             setVoiceAiSpeaking(false);
             setVoiceWaiting(false);
           }
@@ -1453,6 +1515,7 @@ export default function AISocialSkillsPlatform() {
       });
 
       voiceSessionRef.current = session;
+      if (voiceAiSpeakingRef.current) session.setMicrophone(false);
       setVoiceMicLevel(12);
       setVoiceStatus(`通话中 · ${currentVoice.caller}`);
     } catch (error) {
@@ -1476,6 +1539,7 @@ export default function AISocialSkillsPlatform() {
     setVoicePartialSender("caller");
     setVoiceWaiting(false);
     setVoiceAiSpeaking(false);
+    voiceAiSpeakingRef.current = false;
     setVoiceMicLevel(0);
     setVoiceStatus("通话已结束");
     await summarizeVoiceCall();
@@ -1488,7 +1552,7 @@ export default function AISocialSkillsPlatform() {
   function toggleVoiceMic() {
     const next = !voiceMicOn;
     setVoiceMicOn(next);
-    voiceSessionRef.current?.setMicrophone(next);
+    if (!voiceAiSpeakingRef.current) voiceSessionRef.current?.setMicrophone(next);
     if (next) {
       setVoiceMicLevel(voiceConnected ? 12 : 0);
     } else {
@@ -1797,12 +1861,23 @@ export default function AISocialSkillsPlatform() {
                 <div style={{ background: "#fbfcff", border: "1px solid #ebf0f7", borderRadius: "18px", padding: "16px", minHeight: "280px", display: "flex", flexDirection: "column" }}>
                   {messages.map((msg, idx) => <div key={idx} style={styles.bubble(msg.sender === "me")}>{msg.text}</div>)}
                   {chatLoading && <div style={styles.bubble(false)}>正在思考中…</div>}
+                  {textInteractionEnded && <div style={{ color: "#60708f", fontSize: "13px", textAlign: "center", margin: "8px 0" }}>本次练习已结束</div>}
                 </div>
                 <div style={{ marginTop: "14px" }}>
-                  <textarea value={input} onChange={(e) => { setInput(e.target.value); setChatNotice(""); }} placeholder="你会怎么回？" style={{ ...styles.input, minHeight: "90px" }} />
-                  {chatNotice && <div style={{ color: "#c54b5b", marginTop: "8px", lineHeight: 1.6 }}>{chatNotice}</div>}
+                  <textarea value={input} disabled={textInteractionEnded} onChange={(e) => { setInput(e.target.value); setChatNotice(""); }} placeholder={textInteractionEnded ? "本次练习已结束" : "你会怎么回？"} style={{ ...styles.input, minHeight: "90px", background: textInteractionEnded ? "#f7f9fd" : "#fff" }} />
+                  {chatNotice && <div style={{ color: textInteractionEnded ? "#60708f" : "#c54b5b", marginTop: "8px", lineHeight: 1.6 }}>{chatNotice}</div>}
                   <div style={{ display: "flex", gap: "10px", marginTop: "12px", flexWrap: "wrap" }}>
-                    <button style={styles.primaryBtn} onClick={sendMessage}>发送</button>
+                    <button style={styles.primaryBtn} disabled={textInteractionEnded} onClick={sendMessage}>{chatLoading ? "发送中..." : "发送"}</button>
+                    {!textInteractionEnded && (
+                      <button style={styles.secondaryBtn} disabled={chatLoading || suggestionLoading} onClick={generateLiveSuggestion}>
+                        {suggestionLoading ? "准备中..." : "不知道怎么回？"}
+                      </button>
+                    )}
+                    {textInteractionEnded ? (
+                      <button style={styles.secondaryBtn} onClick={() => switchScene(currentScene)}>重新开始本情境</button>
+                    ) : (
+                      <button style={styles.dangerBtn} disabled={chatLoading} onClick={endTextInteraction}>结束本次练习</button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1866,6 +1941,10 @@ export default function AISocialSkillsPlatform() {
                 <div style={styles.sectionTitle}>通话状态</div>
                 <div style={{ fontSize: "28px", fontWeight: 800, marginBottom: "8px" }}>{currentVoice.caller}</div>
                 <div style={{ color: "#60708f", marginBottom: "14px" }}>{voiceStatus}</div>
+                <div style={{ background: "#f7f9fd", borderRadius: "14px", padding: "12px", color: "#445474", lineHeight: 1.7, marginBottom: "14px" }}>
+                  <div style={{ color: "#7584a3", fontSize: "12px", fontWeight: 700, marginBottom: "4px" }}>通话背景</div>
+                  {currentVoice.setting}
+                </div>
                 <div style={{ background: "#eef4ff", borderRadius: "14px", padding: "12px", color: "#445474", lineHeight: 1.7, marginBottom: "14px" }}>
                   当前通话会自动记录回应。
                 </div>
@@ -1915,7 +1994,7 @@ export default function AISocialSkillsPlatform() {
                     {voiceConnected ? "通话中" : "接听"}
                   </button>
                   <button style={styles.dangerBtn} onClick={endVoiceCall}>
-                    挂断
+                    结束本次通话
                   </button>
                   <button style={styles.secondaryBtn} onClick={toggleVoiceMic}>
                     {voiceMicOn ? "关闭麦克风" : "打开麦克风"}
@@ -1947,6 +2026,9 @@ export default function AISocialSkillsPlatform() {
                   <textarea value={voiceInput} onChange={(e) => setVoiceInput(e.target.value)} placeholder="也可以在这里输入你的回应……" style={{ ...styles.input, minHeight: "90px" }} />
                   <div style={{ display: "flex", gap: "10px", marginTop: "12px" }}>
                     <button style={styles.primaryBtn} onClick={sendVoiceReply}>发送回应</button>
+                    <button style={styles.secondaryBtn} disabled={voiceSuggestionLoading} onClick={generateVoiceSuggestion}>
+                      {voiceSuggestionLoading ? "准备中..." : "不知道怎么回？"}
+                    </button>
                   </div>
                 </div>
               </div>

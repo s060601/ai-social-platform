@@ -9,6 +9,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { sanitizeModelText } from "./shared/modelText.js";
 
 dotenv.config();
 
@@ -100,13 +101,17 @@ function normalizeTranscript(items) {
   if (!Array.isArray(items)) return [];
 
   return items
-    .filter((item) => item && typeof item.text === "string" && item.text.trim())
+    .map((item) => ({
+      item,
+      text: sanitizeModelText(String(item?.text || "")).slice(0, 1000),
+    }))
+    .filter(({ item, text }) => item && text)
     .slice(-40)
-    .map((item, index) => ({
+    .map(({ item, text }, index) => ({
       turn: index + 1,
       speaker: item.sender === "me" ? "student" : "role",
       source: item.source === "voice" ? "voice_final_transcript" : "text_input",
-      text: item.text.trim().slice(0, 1000),
+      text,
     }));
 }
 
@@ -114,14 +119,18 @@ function normalizeTurnFeedback(items) {
   if (!Array.isArray(items)) return [];
 
   return items
-    .filter((item) => item && typeof item.text === "string" && item.text.trim())
+    .map((item) => ({
+      item,
+      text: sanitizeModelText(String(item?.text || "")).slice(0, 1000),
+    }))
+    .filter(({ item, text }) => item && text)
     .slice(-30)
-    .map((item, index) => ({
+    .map(({ item, text }, index) => ({
       turn: index + 1,
       speaker: item.sender === "me" ? "student" : "role",
-      text: item.text.trim().slice(0, 1000),
-      analysis: String(item.analysis || "").trim().slice(0, 3000),
-      suggestion: String(item.suggestion || "").trim().slice(0, 3000),
+      text,
+      analysis: sanitizeModelText(String(item.analysis || "")).slice(0, 3000),
+      suggestion: sanitizeModelText(String(item.suggestion || "")).slice(0, 3000),
       dimensions: item.dimensions && typeof item.dimensions === "object" ? item.dimensions : {},
     }));
 }
@@ -189,10 +198,16 @@ const client = new OpenAI({
 
 function safeParseJSON(text) {
   try {
-    return JSON.parse(text);
+    return JSON.parse(sanitizeModelText(text), (_, value) =>
+      typeof value === "string" ? sanitizeModelText(value) : value,
+    );
   } catch {
     return null;
   }
+}
+
+function completionText(completion) {
+  return sanitizeModelText(completion?.choices?.[0]?.message?.content || "");
 }
 
 const SOCIAL_SKILL_DIMENSIONS = `
@@ -307,7 +322,7 @@ app.get("/api/voice/coze-config", (req, res) => {
 
 app.post("/api/voice/feedback", async (req, res) => {
   try {
-    const { sceneTitle, sceneRole, sceneHint, userReply } = req.body;
+    const { sceneTitle, sceneRole, sceneSetting, sceneHint, userReply } = req.body;
 
     if (!sceneTitle || !userReply) {
       return res.status(400).json({ error: "missing sceneTitle or userReply" });
@@ -329,6 +344,7 @@ ${STRUCTURED_SCORE_RULES}
           role: "user",
           content: `场景：${sceneTitle}
 对话对象：${sceneRole || "场景角色"}
+背景信息：${sceneSetting || "未提供"}
 任务目标：${sceneHint || "真实社交表达"}
 用户刚说：${userReply}
 
@@ -339,6 +355,7 @@ ${STRUCTURED_SCORE_RULES}
 3. score 按当前这句话在该场景里的社会沟通表现给 0-100。
 4. 六个测评维度都按 0-100 输出：contextUnderstanding、socialPragmatics、emotionResponse、normExpression、dialogueMaintenance、problemSolving。
 5. clarity、relevance、initiative 作为兼容字段，也按 0-100 输出。
+6. 如果用户没有回应当前通话内容或明显说到无关事情：feedback 用温和的话把注意力带回当前来电，不使用“答非所问”“离题”等标签；example 只给一句能直接接回这通电话的口语化表达，不编造背景外的事实。
 输出格式：
 {
   "score": 0,
@@ -359,7 +376,7 @@ ${STRUCTURED_SCORE_RULES}
       temperature: 0.3,
     });
 
-    const raw = completion.choices?.[0]?.message?.content?.trim() || "";
+    const raw = completionText(completion);
     const parsed = safeParseJSON(raw);
 
     res.json(
@@ -386,7 +403,7 @@ ${STRUCTURED_SCORE_RULES}
 
 app.post("/api/voice/summary", async (req, res) => {
   try {
-    const { sceneTitle, sceneRole, sceneHint, messages } = req.body;
+    const { sceneTitle, sceneRole, sceneSetting, sceneHint, messages } = req.body;
 
     if (!sceneTitle || !Array.isArray(messages)) {
       return res.status(400).json({ error: "missing sceneTitle or messages" });
@@ -424,6 +441,7 @@ ${STRUCTURED_SCORE_RULES}
           role: "user",
           content: `场景：${sceneTitle}
 对话对象：${sceneRole || "场景角色"}
+背景信息：${sceneSetting || "未提供"}
 任务目标：${sceneHint || "真实社交表达"}
 对话记录：
 ${transcript}
@@ -456,7 +474,7 @@ ${transcript}
       temperature: 0.3,
     });
 
-    const raw = completion.choices?.[0]?.message?.content?.trim() || "";
+    const raw = completionText(completion);
     const parsed = safeParseJSON(raw);
 
     res.json(
@@ -484,7 +502,7 @@ ${transcript}
 
 app.post("/api/voice/suggestion", async (req, res) => {
   try {
-    const { sceneTitle, sceneRole, sceneHint, messages } = req.body;
+    const { sceneTitle, sceneRole, sceneSetting, sceneHint, messages } = req.body;
 
     if (!sceneTitle) {
       return res.status(400).json({ error: "missing sceneTitle" });
@@ -503,12 +521,14 @@ app.post("/api/voice/suggestion", async (req, res) => {
           role: "system",
           content: `你是“语依”的表达练习辅助助手。
 ${MEASUREMENT_AI_BOUNDARY}
-只输出一句中文，口语化，适合青少年直接练习；不要解释，不要评分，不要透露测评目标或量规。`,
+只输出一句中文，口语化，适合青少年直接练习；不要解释，不要评分，不要透露测评目标或量规。
+如果最近一句没有回应当前通话内容，给一句能自然回到这通电话的表达；不批评用户，不编造背景外的事实。`,
         },
         {
           role: "user",
           content: `当前场景：${sceneTitle}
 对话对象：${sceneRole || "场景角色"}
+背景信息：${sceneSetting || "未提供"}
 任务目标：${sceneHint || "真实社交表达"}
 最近对话：
 ${transcript}
@@ -519,7 +539,7 @@ ${transcript}
       temperature: 0.7,
     });
 
-    res.json({ suggestion: completion.choices?.[0]?.message?.content?.trim() || "可以呀，我愿意试一试。" });
+    res.json({ suggestion: completionText(completion) || "可以呀，我愿意试一试。" });
   } catch (error) {
     console.error("/api/voice/suggestion error:", error);
     res.status(500).json({ error: "voice suggestion failed", detail: error?.message || "unknown error" });
@@ -530,7 +550,7 @@ ${transcript}
 
 app.post("/api/chat", async (req, res) => {
   try {
-    const { sceneTitle, sceneRole, sceneRoleStyle, sceneHint, starter, messages } = req.body;
+    const { sceneTitle, sceneRole, sceneRoleStyle, sceneSetting, sceneHint, starter, messages } = req.body;
 
     if (!sceneTitle || !starter || !Array.isArray(messages)) {
       return res.status(400).json({ error: "参数不完整" });
@@ -557,6 +577,12 @@ ${MEASUREMENT_AI_BOUNDARY}
 11. 角色表现要求：${sceneRoleStyle || "保持符合角色关系的自然语气。"}
 12. 内部任务目标：${sceneHint}
 13. 开场白：${starter}
+14. 背景信息：${sceneSetting || "未提供"}
+15. 角色边界：用户始终是学生，“我”指当前角色，“你”指学生；不得把双方的身份、经历或已完成的事情互相调换。
+16. 事实边界：只可使用场景名称、角色表现要求、背景信息、开场白和用户已经说出的信息。不得凭空加入新的活动、地点、人物、作业、题目、页码或任务。
+17. 如果信息不足，不要假装看见了题目、物品或现场动作；只提出一个能够根据已出现信息回答的简短问题，或说明自己需要用户补充什么。
+18. 如果用户答非所问、完全离题，或只说了与当前对话无关的话：不要批评、不要说“你离题了”，也不要突然换到新话题。先用一句简短自然的话接住，再只围绕已给出的背景信息，把对话拉回当前事情，并问一个容易回答的具体问题。比如“我有点没听明白。我们刚才是在确认你什么时候能下楼，你大概还要几分钟？”
+19. 如果用户表示不知道、想不起来或不会说：不要连续追问。可以给一个很短的选择，或用当前角色自然地示范一句可接的话，但不得替用户编造经历。
 `;
 
     const chatMessages = [
@@ -573,8 +599,7 @@ ${MEASUREMENT_AI_BOUNDARY}
       temperature: 0.8,
     });
 
-    const reply =
-      completion.choices?.[0]?.message?.content?.trim() || "我明白你的意思了。";
+    const reply = completionText(completion) || "我明白你的意思了。";
 
     res.json({ reply });
   } catch (error) {
@@ -624,7 +649,7 @@ app.post("/api/assist", async (req, res) => {
       temperature: 0.7,
     });
 
-    const raw = completion.choices?.[0]?.message?.content?.trim() || "";
+    const raw = completionText(completion);
     const parsed = safeParseJSON(raw);
 
     if (!parsed) {
@@ -647,7 +672,7 @@ app.post("/api/assist", async (req, res) => {
 
 app.post("/api/score", async (req, res) => {
   try {
-    const { sceneTitle, sceneHint, userReply } = req.body;
+    const { sceneTitle, sceneSetting, sceneHint, userReply } = req.body;
 
     if (!sceneTitle || !userReply) {
       return res.status(400).json({ error: "参数不完整" });
@@ -672,8 +697,10 @@ ${STRUCTURED_SCORE_RULES}
 8. 当 score >= 80 时，suggestion 应以具体肯定为主，说明用户已经做到的行为，不要硬挑问题或要求继续补充。
 9. 当 score < 80 时，suggestion 只给一个最优先、可练习的方向，不要罗列多个要求，不要泄露评分维度或内部任务目标。
 10. 为兼容旧前端，同时给出 politeness、relevance、clarity、continuation 四项 0-25 分，分别由礼貌规范、情境理解、社会语用、对话维持折算。
+11. 如果回答没有回应当前情境或明显离题：evidence 只客观说明“尚未回应当前问题”；comment 用一句不批评的引导语；suggestion 只给一句用户现在就能说出口、能回到当前对话的参考表达。不要写“答非所问”“离题”“你应该”。
 
 场景：${sceneTitle}
+背景信息：${sceneSetting || "未提供"}
 内部任务目标：${sceneHint}
 用户回答：${userReply}
 
@@ -704,7 +731,7 @@ ${STRUCTURED_SCORE_RULES}
       temperature: 0.3,
     });
 
-    const raw = completion.choices?.[0]?.message?.content?.trim() || "";
+    const raw = completionText(completion);
     const parsed = safeParseJSON(raw);
 
     if (!parsed) {
@@ -740,7 +767,7 @@ ${STRUCTURED_SCORE_RULES}
 
 app.post("/api/suggest", async (req, res) => {
   try {
-    const { sceneTitle, sceneHint, starter, messages } = req.body;
+    const { sceneTitle, sceneRole, sceneSetting, sceneHint, starter, messages } = req.body;
 
     if (!sceneTitle || !sceneHint || !starter) {
       return res.status(400).json({ error: "参数不完整" });
@@ -770,16 +797,14 @@ ${MEASUREMENT_AI_BOUNDARY}
         },
         {
           role: "user",
-          content: `场景：${sceneTitle}\n目标：${sceneHint}\n开场：${starter}`,
+          content: `场景：${sceneTitle}\n对话对象：${sceneRole || "场景角色"}\n背景信息：${sceneSetting || "未提供"}\n目标：${sceneHint}\n开场：${starter}\n如果用户刚才没有回应对方的问题，请给一句能够自然回到当前事情的短句；不要评价用户，也不要编造背景中没有的事实。`,
         },
         ...formattedMessages,
       ],
       temperature: 0.7,
     });
 
-    const suggestion =
-      completion.choices?.[0]?.message?.content?.trim() ||
-      "你好，我刚下课，准备过去。";
+    const suggestion = completionText(completion) || "你好，我刚下课，准备过去。";
 
     res.json({ suggestion });
   } catch (error) {
@@ -797,7 +822,9 @@ function signToken(user) {
   return jwt.sign(
     { id: user.id, username: user.username, role: user.role, name: user.name },
     JWT_SECRET,
-    { expiresIn: "7d" },
+    // Keep a trusted browser signed in for the study period. Users can still
+    // end the session immediately through the explicit logout control.
+    { expiresIn: "30d" },
   );
 }
 
@@ -995,13 +1022,13 @@ app.post("/api/student/session", (req, res) => {
     scene: scene || "",
     score: Number(score) || 0,
     duration: Number(duration) || 0,
-    summary: summary || "",
+    summary: sanitizeModelText(String(summary || "")).slice(0, 3000),
     dimensions: dimensions && typeof dimensions === "object" ? dimensions : {},
-    evidence: evidence || summary || "",
-    strength: strength || "",
-    supportNeed: supportNeed || "",
-    comment: comment || summary || "",
-    suggestion: suggestion || "",
+    evidence: sanitizeModelText(String(evidence || summary || "")).slice(0, 3000),
+    strength: sanitizeModelText(String(strength || "")).slice(0, 3000),
+    supportNeed: sanitizeModelText(String(supportNeed || "")).slice(0, 3000),
+    comment: sanitizeModelText(String(comment || summary || "")).slice(0, 3000),
+    suggestion: sanitizeModelText(String(suggestion || "")).slice(0, 3000),
     transcript: normalizeTranscript(transcript),
     turnFeedback: normalizeTurnFeedback(turnFeedback),
     timestamp: new Date().toISOString(),
@@ -1142,7 +1169,7 @@ ${sessionSummary}
       temperature: 0.4,
     });
 
-    const raw = completion.choices?.[0]?.message?.content?.trim() || "";
+    const raw = completionText(completion);
     const parsed = safeParseJSON(raw);
     res.json(parsed || {
       suggestion: "根据近期表现，建议重点关注情境理解后的信息补充和问题解决表达，并在类似作业提醒、活动邀请等任务中继续收集行为证据。",
@@ -1279,7 +1306,7 @@ ${MEASUREMENT_AI_BOUNDARY}
       temperature: 0.6,
     });
 
-    const raw = completion.choices?.[0]?.message?.content?.trim() || "";
+    const raw = completionText(completion);
     const parsed = safeParseJSON(raw);
     res.json(parsed || {
       tip: "把支持放在日常对话里，每次只练一个小目标，保持轻松和可预期。",

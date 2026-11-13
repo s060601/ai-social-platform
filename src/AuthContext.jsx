@@ -3,6 +3,23 @@ import { API_BASE } from "./config";
 
 const AuthContext = createContext(null);
 
+function readStoredUser(token) {
+  try {
+    const payload = token.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/");
+    const data = JSON.parse(atob(payload));
+    if (!data?.role) return null;
+    return {
+      token,
+      id: data.id,
+      username: data.username,
+      role: data.role,
+      name: data.name,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);   // { token, role, name, username }
   const [loading, setLoading] = useState(true);
@@ -11,15 +28,34 @@ export function AuthProvider({ children }) {
     const token = localStorage.getItem("yuyi_token");
     if (!token) { setLoading(false); return; }
 
+    const storedUser = readStoredUser(token);
+    if (!storedUser) {
+      localStorage.removeItem("yuyi_token");
+      setLoading(false);
+      return;
+    }
+
     fetch(`${API_BASE}/api/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.role) setUser({ ...data, token });
-        else localStorage.removeItem("yuyi_token");
+      .then(async (r) => ({ ok: r.ok, status: r.status, data: await r.json().catch(() => ({})) }))
+      .then(({ ok, status, data }) => {
+        if (ok && data.role) {
+          setUser({ ...data, token });
+          return;
+        }
+
+        // Only a clear authentication failure should sign the device out.
+        // A temporary outage or a deployment restart must not discard login.
+        if (status === 401 || status === 403) {
+          localStorage.removeItem("yuyi_token");
+          setUser(null);
+          return;
+        }
+
+        setUser(storedUser);
       })
-      .catch(() => localStorage.removeItem("yuyi_token"))
+      .catch(() => setUser(storedUser))
       .finally(() => setLoading(false));
   }, []);
 

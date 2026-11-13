@@ -1,5 +1,6 @@
 ﻿import { RealtimeClient, EventNames, RealtimeUtils } from "@coze/realtime-api";
 import { API_BASE } from "./config";
+import { sanitizeModelText } from "../shared/modelText.js";
 
 function normalizeText(value) {
   if (typeof value !== "string") return "";
@@ -15,7 +16,7 @@ function normalizeText(value) {
     }
   }
 
-  return text;
+  return sanitizeModelText(text);
 }
 
 function pickText(event) {
@@ -72,7 +73,10 @@ function makeMessageEvent(eventName, event) {
   const role = readRole(event);
   const isUserRole = role === "user";
   const isAssistantRole = role === "assistant" || role === "bot";
-  const isUserTranscript = type.includes("audio_transcript") || isUserRole;
+  // Never treat the agent's generated text as microphone input.
+  const isUserTranscript = (type.includes("audio_transcript") || isUserRole)
+    && !isAssistantRole
+    && !type.includes("assistant");
   const isAssistantMessage = type.includes("conversation.message") || type.includes("audio.sentence");
   const shouldShowText = isUserTranscript || isAssistantMessage || isAssistantRole;
   const text = shouldShowText ? pickText(event) : "";
@@ -127,6 +131,8 @@ export async function createCozeVoiceSession({
     allowPersonalAccessTokenInBrowser: true,
     audioMutedDefault: false,
     isAutoSubscribeAudio: true,
+    suppressStationaryNoise: true,
+    suppressNonStationaryNoise: true,
     prologueContent,
   });
 
