@@ -17,7 +17,14 @@ export function sanitizeModelText(value) {
     "",
   );
 
-  // Remove stray or malformed markers such as </think_never_used_xxx.
+  // Streaming services sometimes omit the closing bracket or add an unseen
+  // suffix. Strip the whole marker line instead of exposing it to learners.
+  cleaned = cleaned.replace(
+    /<\/?(?:think|reasoning|analysis)[^>\r\n]*>?/gi,
+    "",
+  );
+
+  // Remove any remaining regular internal markers.
   cleaned = cleaned.replace(
     new RegExp(`<\\/?${INTERNAL_TAG}(?:\\s[^>]*)?>?`, "gi"),
     "",
