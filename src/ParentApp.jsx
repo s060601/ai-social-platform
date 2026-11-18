@@ -3,9 +3,11 @@ import { useNavigate } from "react-router-dom";
 import { API_BASE } from "./config";
 import { beijingDateKey, beijingTime } from "../shared/time.js";
 import TrackingCheckin from "./TrackingCheckin";
+import SsdsScale from "./SsdsScale";
 
 const navs = [
   { key: "report", label: "测评报告" },
+  { key: "ssds", label: "SSDS 量表" },
   { key: "tracking", label: "两周观察" },
   { key: "feedback", label: "教师反馈" },
   { key: "practice", label: "家庭支持" },
@@ -159,6 +161,7 @@ export default function ParentApp() {
           },
           latestFeedback: latestNote ? { homework: latestNote.homework } : null,
           latestTracking: latestTracking ? { scores: latestTracking.scores, note: latestTracking.note } : null,
+          latestSsds: summary.latestSsds ? { scores: summary.latestSsds.scores, languageMode: summary.latestSsds.languageMode } : null,
         }),
       });
       const data = await res.json();
@@ -458,6 +461,14 @@ export default function ParentApp() {
                 authHeaders={authHeaders}
                 accentColor="#f77f00"
                 observerLabel="家长"
+              />
+            )}
+
+            {activeTab === "ssds" && (
+              <SsdsScale
+                student={summary.student}
+                authHeaders={authHeaders}
+                onSaved={(record) => setSummary((current) => current ? { ...current, latestSsds: record } : current)}
               />
             )}
 

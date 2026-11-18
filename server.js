@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { sanitizeModelText } from "./shared/modelText.js";
 import { beijingDateKey, beijingDateTime } from "./shared/time.js";
+import { scoreSsds, SSDS_VERSION } from "./shared/ssds.js";
 
 dotenv.config();
 
@@ -90,18 +91,23 @@ loadUsers();
 const SESSIONS_FILE = path.join(__dirname, "sessions.json");
 const NOTES_FILE = path.join(__dirname, "notes.json");
 const TRACKING_FILE = path.join(__dirname, "tracking.json");
+const SSDS_FILE = path.join(__dirname, "ssds.json");
 let SESSIONS = [];
 let NOTES = [];
 let TRACKING = [];
+let SSDS_RESPONSES = [];
 function loadSessions() { try { SESSIONS = JSON.parse(fs.readFileSync(SESSIONS_FILE, "utf-8")); } catch { SESSIONS = []; } }
 function saveSessions() { fs.writeFileSync(SESSIONS_FILE, JSON.stringify(SESSIONS, null, 2), "utf-8"); }
 function loadNotes() { try { NOTES = JSON.parse(fs.readFileSync(NOTES_FILE, "utf-8")); } catch { NOTES = []; } }
 function saveNotes() { fs.writeFileSync(NOTES_FILE, JSON.stringify(NOTES, null, 2), "utf-8"); }
 function loadTracking() { try { TRACKING = JSON.parse(fs.readFileSync(TRACKING_FILE, "utf-8")); } catch { TRACKING = []; } }
 function saveTracking() { fs.writeFileSync(TRACKING_FILE, JSON.stringify(TRACKING, null, 2), "utf-8"); }
+function loadSsds() { try { SSDS_RESPONSES = JSON.parse(fs.readFileSync(SSDS_FILE, "utf-8")); } catch { SSDS_RESPONSES = []; } }
+function saveSsds() { fs.writeFileSync(SSDS_FILE, JSON.stringify(SSDS_RESPONSES, null, 2), "utf-8"); }
 loadSessions();
 loadNotes();
 loadTracking();
+loadSsds();
 
 function normalizeTranscript(items) {
   if (!Array.isArray(items)) return [];
@@ -1384,12 +1390,71 @@ app.post("/api/parent/unlink-child", (req, res) => {
   res.json({ ok: true });
 });
 
+function parentCanAccessStudent(user, studentId) {
+  const parent = getStoredUser(user?.id);
+  return user?.role === "parent" && Number(parent?.childId) === Number(studentId);
+}
+
+function ssdsRecordForViewer(record) {
+  const { answers, ...summary } = record;
+  return summary;
+}
+
+app.get("/api/parent/student/:id/ssds", (req, res) => {
+  const user = getAuthUser(req);
+  const studentId = Number(req.params.id);
+  if (!user || user.role !== "parent") return res.status(401).json({ error: "未授权" });
+  if (!parentCanAccessStudent(user, studentId)) return res.status(403).json({ error: "请先绑定该孩子账号" });
+
+  const records = SSDS_RESPONSES
+    .filter((record) => Number(record.studentId) === studentId && Number(record.parentId) === Number(user.id))
+    .sort((left, right) => new Date(right.timestamp) - new Date(left.timestamp))
+    .map(ssdsRecordForViewer);
+  res.json({ instrument: "SSDS 1.0 Mandarin", version: SSDS_VERSION, records });
+});
+
+app.post("/api/parent/student/:id/ssds", (req, res) => {
+  const user = getAuthUser(req);
+  const studentId = Number(req.params.id);
+  if (!user || user.role !== "parent") return res.status(401).json({ error: "未授权" });
+  if (!parentCanAccessStudent(user, studentId)) return res.status(403).json({ error: "请先绑定该孩子账号" });
+  if (req.body?.acknowledged !== true) return res.status(400).json({ error: "请确认已按过去四周的一般表现完成填写" });
+
+  const languageMode = req.body?.languageMode === "nonverbal" ? "nonverbal" : "verbal";
+  const itemCount = languageMode === "nonverbal" ? 58 : 71;
+  const answers = Object.fromEntries(Array.from({ length: itemCount }, (_, index) => {
+    const number = index + 1;
+    return [number, Number(req.body?.answers?.[number])];
+  }));
+  const scores = scoreSsds(answers, languageMode);
+  if (!scores) return res.status(400).json({ error: "请完成所有必答题后再保存" });
+
+  const student = getStoredUser(studentId);
+  if (!student || student.role !== "student") return res.status(404).json({ error: "学员不存在" });
+  const record = {
+    id: crypto.randomBytes(8).toString("hex"),
+    instrument: "SSDS 1.0 Mandarin",
+    version: SSDS_VERSION,
+    studentId,
+    studentName: student.name,
+    parentId: user.id,
+    parentName: user.name,
+    relationship: sanitizeModelText(String(req.body?.relationship || "")).slice(0, 80),
+    languageMode,
+    answers,
+    scores,
+    timestamp: new Date().toISOString(),
+  };
+  SSDS_RESPONSES.push(record);
+  saveSsds();
+  res.json({ ok: true, record: ssdsRecordForViewer(record) });
+});
+
 app.get("/api/parent/student/:id/summary", (req, res) => {
   const user = getAuthUser(req);
   if (!user || user.role !== "parent") return res.status(401).json({ error: "未授权" });
-  const parent = USERS.find((u) => u.id === user.id);
-  if (!parent?.childId) return res.status(403).json({ error: "请先绑定孩子账号" });
   const studentId = Number(req.params.id);
+  if (!parentCanAccessStudent(user, studentId)) return res.status(403).json({ error: "请先绑定该孩子账号" });
   const student = USERS.find((u) => u.id === studentId && u.role === "student");
   if (!student) return res.status(404).json({ error: "学员不存在" });
   const allSessions = SESSIONS.filter((s) => s.studentId === studentId)
@@ -1413,6 +1478,9 @@ app.get("/api/parent/student/:id/summary", (req, res) => {
     return [key, scores.length ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : null];
   }));
   const notes = NOTES.filter((n) => n.studentId === studentId).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  const latestSsds = SSDS_RESPONSES
+    .filter((record) => Number(record.studentId) === studentId && Number(record.parentId) === Number(user.id))
+    .sort((left, right) => new Date(right.timestamp) - new Date(left.timestamp))[0];
   res.json({
     student: { id: student.id, name: student.name, username: student.username },
     totalSessions: allSessions.length,
@@ -1424,12 +1492,13 @@ app.get("/api/parent/student/:id/summary", (req, res) => {
     recentSessions: allSessions.slice(0, 10).map((session) => sessionForViewer(session)),
     recentThreeDaySessions: sessionsFromLatestDates(allSessions).map((session) => sessionForViewer(session)),
     notes,
+    latestSsds: latestSsds ? ssdsRecordForViewer(latestSsds) : null,
   });
 });
 
 app.post("/api/parent/practice", async (req, res) => {
   try {
-    const { childName, weekReport, trends, latestFeedback, latestTracking } = req.body;
+    const { childName, weekReport, trends, latestFeedback, latestTracking, latestSsds } = req.body;
 
     const reportSummary = weekReport
       ? `本周测评 ${weekReport.totalSessions} 次，平均分 ${weekReport.avgScore}，最强模块：${weekReport.bestModule}，进步：${weekReport.improvement}`
@@ -1448,6 +1517,9 @@ app.post("/api/parent/practice", async (req, res) => {
     const trackingSummary = trackingScores.length
       ? "最近两周训练观察平均 " + (trackingScores.reduce((sum, score) => sum + score, 0) / trackingScores.length).toFixed(1) + "/5；补充观察：" + sanitizeModelText(String(latestTracking?.note || "无")).slice(0, 300)
       : "暂无两周训练观察记录";
+    const ssdsSummary = latestSsds?.scores?.total
+      ? "最近 SSDS 原始总分 " + latestSsds.scores.total + "/" + latestSsds.scores.max + "，每题平均 " + latestSsds.scores.average + "/5；仅作纵向训练参考，不作诊断判断。"
+      : "暂无 SSDS 结果";
 
     const completion = await client.chat.completions.create({
       model: process.env.OPENAI_MODEL,
@@ -1465,6 +1537,7 @@ ${MEASUREMENT_AI_BOUNDARY}
 能力趋势：${trendSummary}
 教师支持任务：${feedbackNote || "无"}
 两周训练观察：${trackingSummary}
+SSDS 结果：${ssdsSummary}
 
 请生成：
 1. tip：1 句家庭支持的总体提示，温馨鼓励的语气。
