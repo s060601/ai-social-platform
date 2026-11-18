@@ -13,6 +13,8 @@ const scenes = [
     role: "班主任",
     roleStyle: "你是班主任。先礼貌地叫住学生确认情况，不把忘交作业说成指责；学生说明后，用日常口吻回应，再自然询问下一步安排。",
     setting: "周一课间，数学作业应在第一节课前交。你把作业忘在家里，最快下午放学后能补交。",
+    studentInfo: ["今天第一节课前要交数学作业。", "你的作业忘在家里。", "你最快放学后能补交。"],
+    roleInfo: ["班主任知道作业可以在今天放学后补交。"],
     hint: "测评情境理解、责任说明、礼貌表达、对话维持和问题解决",
     target: "观察学员能否理解老师意图，并说明作业状态、困难与补救安排。",
     starter: "同学，方便耽误你一分钟吗？今天的作业我这里还没收到。",
@@ -26,6 +28,7 @@ const scenes = [
     role: "同学小南",
     roleStyle: "你是同龄同学小南。你在放学后约对方周末一起出去，语气轻松自然；根据对方的意愿顺着聊时间、地点或其他安排。",
     setting: "周五放学后，小南约你周六下午两点在学校东门集合，一起去附近公园。你需要决定是否参加。",
+    studentInfo: ["现在是周五放学后。", "小南约你周六两点在学校东门集合。", "活动地点是附近公园。"],
     hint: "测评回应邀请、表达意愿、协商细节和主动延续",
     target: "观察学员能否在同伴邀请中表达意愿、询问安排并保持自然交流。",
     starter: "周六下午我们打算去公园，你要一起吗？",
@@ -39,9 +42,11 @@ const scenes = [
     role: "数学老师",
     roleStyle: "你是数学老师。学生来确认今天作业的要求；你只围绕已经说出的作业安排回答，不虚构题目内容、页码或额外任务。",
     setting: "放学前，老师说数学作业在练习册第 18 页。你想确认具体题号，以及是不是明天早上交。",
+    studentInfo: ["老师课上提到练习册第 18 页。", "你没听清要做哪几题。", "你也想确认什么时候交。"],
+    roleInfo: ["练习册第 18 页做第 1 到第 4 题。", "作业明天早上交。"],
     hint: "测评清楚提问、确认关键信息和礼貌结束对话",
     target: "观察学员能否向老师明确询问作业要求，并复述或确认下一步安排。",
-    starter: "老师，我想确认一下今天的数学作业。请把练习册第 18 页第 1 到第 4 题完成，明天早上交。你还有哪里不清楚吗？",
+    starter: "你想确认今天的数学作业吗？哪里没有听清？",
     expected: ["围绕已呈现的作业安排提问", "确认页码、题号或提交时间", "礼貌结束对话"],
     indicators: ["情境理解", "社会语用", "问题解决"],
   },
@@ -52,6 +57,8 @@ const scenes = [
     role: "妈妈",
     roleStyle: "你是放学后等孩子回家的妈妈。语气关心但不责备；先确认人是否安全、在哪里，再一起商量怎么回家。",
     setting: "放学后，妈妈在学校南门等你。你还在三楼教室收拾书包，大约五分钟后能下楼。",
+    studentInfo: ["妈妈在学校南门等你。", "你还在三楼教室收书包。", "你大约五分钟后能下楼。"],
+    roleInfo: ["妈妈会在南门再等五分钟。"],
     hint: "测评家庭沟通中的原因说明、需求表达和协商能力",
     target: "观察学员能否向家长说明计划变动，并协商下一步安排。",
     starter: "我到学校门口了，没看到你，就打电话问问。你现在是在教室，还是已经出来了？",
@@ -65,6 +72,8 @@ const scenes = [
     role: "朋友小雨",
     roleStyle: "你是同龄朋友小雨。你今天心情不好，但不强迫对方安慰；对方愿意听时，再自然说一点自己的感受。",
     setting: "午休后，小雨在走廊找你。她和同学做分组作业时发生误会，觉得对方不愿意和她一组。",
+    studentInfo: ["现在是午休后，你在走廊。", "小雨和同学做分组作业时有误会。", "她觉得对方不愿意和她一组。"],
+    roleInfo: ["小雨原本约好和同学一起做海报，但对方临时和别人一组。"],
     hint: "测评情绪识别、共情回应和继续倾听",
     target: "观察学员能否识别对方情绪，并用支持性语言邀请对方表达。",
     starter: "我今天有点烦，不太想说话。",
@@ -78,6 +87,7 @@ const scenes = [
     role: "同学小周",
     roleStyle: "你是同龄同学小周，在私聊里约对方周末义卖时一起负责收款。语气像真实聊天，不像公告；根据对方回复确认是否方便和具体安排。",
     setting: "周六上午班级在操场举行义卖。你和小周都报名了收款志愿，他想和你一起负责收款台。",
+    studentInfo: ["周六上午班级在操场举行义卖。", "你和小周都报名了收款志愿。", "小周想和你一起负责收款台。"],
     hint: "测评线上表达的清晰度、边界感和社会规范",
     target: "观察学员能否在私聊中清楚表达意愿、确认安排并保持自然交流。",
     starter: "我刚在群里看到你也报了周末的义卖。要不要咱俩一起负责收款？",
@@ -271,7 +281,20 @@ const generatedSceneOptions = {
 };
 
 const STUDENT_HISTORY_KEY = "yuyi_student_history";
-const STUDENT_GENERATED_SCENES_KEY = "yuyi_generated_scenes";
+const STUDENT_GENERATED_SCENES_KEY = "yuyi_generated_scenes_v2";
+
+function sceneFacts(scene) {
+  const facts = Array.isArray(scene?.studentInfo)
+    ? scene.studentInfo.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 3)
+    : [];
+  return facts.length ? facts : (scene?.setting ? [scene.setting] : []);
+}
+
+function sceneRoleFacts(scene) {
+  return Array.isArray(scene?.roleInfo)
+    ? scene.roleInfo.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 2)
+    : [];
+}
 
 function recommendTrainingLevel(history, sceneTitle) {
   const recentScores = history
@@ -749,6 +772,8 @@ export default function AISocialSkillsPlatform() {
 
   const allScenes = useMemo(() => [...scenes, ...generatedScenes], [generatedScenes]);
   const currentScene = useMemo(() => allScenes.find((s) => s.id === sceneId) || allScenes[0] || scenes[0], [allScenes, sceneId]);
+  const visibleSceneFacts = useMemo(() => sceneFacts(currentScene), [currentScene]);
+  const roleSceneFacts = useMemo(() => sceneRoleFacts(currentScene), [currentScene]);
   const currentVoice = useMemo(() => voiceScenarios.find((s) => s.id === voiceScenarioId) || voiceScenarios[0], [voiceScenarioId]);
   const currentStory = useMemo(() => stories.find((s) => s.id === storyId) || stories[0], [storyId]);
   const currentEmpathy = useMemo(() => empathyCases.find((s) => s.id === empathyId) || empathyCases[0], [empathyId]);
@@ -1081,6 +1106,8 @@ export default function AISocialSkillsPlatform() {
             sceneRole: currentScene.role,
             sceneRoleStyle: currentScene.roleStyle,
             sceneSetting: currentScene.setting,
+            sceneFacts: visibleSceneFacts,
+            roleFacts: roleSceneFacts,
             sceneHint: currentScene.hint,
             starter: currentScene.starter,
             trainingLevel,
@@ -1093,6 +1120,7 @@ export default function AISocialSkillsPlatform() {
           body: JSON.stringify({
             sceneTitle: currentScene.title,
             sceneSetting: currentScene.setting,
+            sceneFacts: visibleSceneFacts,
             sceneHint: currentScene.hint,
             trainingLevel,
             userReply: text,
@@ -1240,6 +1268,7 @@ export default function AISocialSkillsPlatform() {
         sceneTitle: currentScene.title,
         sceneRole: currentScene.role,
         sceneSetting: currentScene.setting,
+        sceneFacts: visibleSceneFacts,
         sceneHint: currentScene.hint,
         starter: currentScene.starter,
         messages,
@@ -1973,7 +2002,8 @@ export default function AISocialSkillsPlatform() {
                 <div style={styles.sectionTitle}>现在的情况</div>
                 <h3 style={{ marginTop: 0 }}>{currentScene.title}</h3>
                 <div style={{ background: "#f7f9fd", borderRadius: "16px", padding: "14px", color: "#31415f", lineHeight: 1.75 }}>
-                  {currentScene.setting}
+                  <div style={{ color: "#7584a3", fontSize: "13px", fontWeight: 700, marginBottom: "7px" }}>你现在知道</div>
+                  {visibleSceneFacts.map((fact) => <div key={fact}>• {fact}</div>)}
                 </div>
                 <div style={{ marginTop: "14px", borderTop: "1px solid #edf1f7", paddingTop: "14px" }}>
                   <div style={{ fontSize: "13px", color: "#7584a3", fontWeight: 700, marginBottom: "8px" }}>本次练习方式</div>
@@ -1994,7 +2024,7 @@ export default function AISocialSkillsPlatform() {
                 </div>
                 {trainingLevel !== "independent" && (
                   <div style={{ marginTop: "14px", background: "#eef4ff", borderRadius: "12px", padding: "12px 14px", color: "#445474", lineHeight: 1.7, fontSize: "14px" }}>
-                    <strong>{trainingLevel === "guided" ? "可用信息：" : "关键提示："}</strong>{trainingLevel === "guided" ? (currentScene.target || currentScene.hint) : currentScene.hint}
+                    <strong>{trainingLevel === "guided" ? "练习重点：" : "简要提示："}</strong>{currentScene.hint}
                     {trainingLevel === "guided" && currentScene.expected?.length > 0 && <div style={{ marginTop: "6px" }}>可以试着做到：{currentScene.expected.slice(0, 3).join("、")}</div>}
                   </div>
                 )}

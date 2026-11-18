@@ -306,6 +306,13 @@ function pausedRoleReply() {
   return "听起来你现在有点烦，没关系。我们先不急着说这件事：你想先缓一下，还是愿意告诉我哪里让你不舒服？";
 }
 
+function sceneFactsText(value, fallback = "") {
+  const facts = Array.isArray(value)
+    ? value.map((item) => sanitizeModelText(String(item || "")).replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 3)
+    : [];
+  return facts.length ? facts.join("\n") : fallback;
+}
+
 function moderationKey(req) {
   return req.ip || req.socket?.remoteAddress || "unknown";
 }
@@ -595,7 +602,7 @@ ${transcript}
 
 app.post("/api/chat", async (req, res) => {
   try {
-    const { sceneTitle, sceneRole, sceneRoleStyle, sceneSetting, sceneHint, starter, messages, trainingLevel } = req.body;
+    const { sceneTitle, sceneRole, sceneRoleStyle, sceneSetting, sceneFacts, roleFacts, sceneHint, starter, messages, trainingLevel } = req.body;
 
     if (!sceneTitle || !starter || !Array.isArray(messages)) {
       return res.status(400).json({ error: "参数不完整" });
@@ -603,6 +610,8 @@ app.post("/api/chat", async (req, res) => {
     if (rejectBlockedContent(req, res, messages.filter((m) => m?.sender === "me").map((m) => m.text))) return;
     const latestUserMessage = [...messages].reverse().find((message) => message?.sender === "me")?.text;
     if (isLowPressureReply(latestUserMessage)) return res.json({ reply: pausedRoleReply() });
+    const visibleFacts = sceneFactsText(sceneFacts, sceneSetting || "未提供");
+    const privateRoleFacts = sceneFactsText(roleFacts, "无");
 
     const systemPrompt = `
 你是“语依”系统中的标准化互动角色。
@@ -624,13 +633,14 @@ ${MEASUREMENT_AI_BOUNDARY}
 11. 角色表现要求：${sceneRoleStyle || "保持符合角色关系的自然语气。"}
 12. 内部任务目标：${sceneHint}
 13. 开场白：${starter}
-14. 背景信息：${sceneSetting || "未提供"}
-15. 角色边界：用户始终是学生，“我”指当前角色，“你”指学生；不得把双方的身份、经历或已完成的事情互相调换。
-16. 事实边界：只可使用场景名称、角色表现要求、背景信息、开场白和用户已经说出的信息。不得凭空加入新的活动、地点、人物、作业、题目、页码或任务。
-17. 如果信息不足，不要假装看见了题目、物品或现场动作；只提出一个能够根据已出现信息回答的简短问题，或说明自己需要用户补充什么。
-18. 如果用户答非所问、完全离题，或只说了与当前对话无关的话：不要批评、不要说“你离题了”，也不要突然换到新话题。先用一句简短、放松的回应承认对方可能暂时不想答，再只围绕已给出的背景信息，把对话拉回当前事情，并问一个容易回答的具体问题。比如“没关系，我们慢一点。刚才是在确认你什么时候能下楼，你大概还要几分钟？”
-19. 如果用户表示不知道、想不起来或不会说：不要连续追问。可以给一个很短的选择，或用当前角色自然地示范一句可接的话，但不得替用户编造经历。
-20. 当前练习支持强度：${trainingLevel === "guided" ? "引导练习。用户卡住时，你可以给一个很短的二选一或一条可接的话。" : trainingLevel === "supported" ? "半引导。优先自然追问，只有明显卡住时才给一个简短提示。" : "独立挑战。除非用户明确表示不知道，否则不主动给示范或选项。"}
+14. 被试可见信息（你也只能使用这些事实）：${visibleFacts}
+15. 角色私有信息（只有当前角色知道，必要时才向被试说明）：${privateRoleFacts}
+16. 角色边界：用户始终是学生，“我”指当前角色，“你”指学生；不得把双方的身份、经历或已完成的事情互相调换。
+17. 事实边界：只可使用场景名称、角色表现要求、被试可见信息、角色私有信息、开场白和用户已经说出的信息。角色私有信息只能在用户合理询问后自然说明，不能假设被试已经知道，也不能用它反过来责备被试。不得凭空加入新的活动、地点、人物、作业、题目、页码或任务；也不要追问被试卡片中没有提供、且无法合理回答的细节。
+18. 如果信息不足，不要假装看见了题目、物品或现场动作；只提出一个能够根据已出现信息回答的简短问题，或说明自己需要用户补充什么。
+19. 如果用户答非所问、完全离题，或只说了与当前对话无关的话：不要批评、不要说“你离题了”，也不要突然换到新话题。先用一句简短、放松的回应承认对方可能暂时不想答，再只围绕已给出的背景信息，把对话拉回当前事情，并问一个容易回答的具体问题。比如“没关系，我们慢一点。刚才是在确认你什么时候能下楼，你大概还要几分钟？”
+20. 如果用户表示不知道、想不起来或不会说：不要连续追问。可以给一个很短的选择，或用当前角色自然地示范一句可接的话，但不得替用户编造经历。
+21. 当前练习支持强度：${trainingLevel === "guided" ? "引导练习。用户卡住时，你可以给一个很短的二选一或一条可接的话。" : trainingLevel === "supported" ? "半引导。优先自然追问，只有明显卡住时才给一个简短提示。" : "独立挑战。除非用户明确表示不知道，否则不主动给示范或选项。"}
 `;
 
     const chatMessages = [
@@ -720,13 +730,14 @@ app.post("/api/assist", async (req, res) => {
 
 app.post("/api/score", async (req, res) => {
   try {
-    const { sceneTitle, sceneSetting, sceneHint, userReply, trainingLevel } = req.body;
+    const { sceneTitle, sceneSetting, sceneFacts, sceneHint, userReply, trainingLevel } = req.body;
 
     if (!sceneTitle || !userReply) {
       return res.status(400).json({ error: "参数不完整" });
     }
     if (rejectBlockedContent(req, res, userReply)) return;
     if (isLowPressureReply(userReply)) return res.json(pausedPracticeResult(userReply));
+    const visibleFacts = sceneFactsText(sceneFacts, sceneSetting || "未提供");
 
     const prompt = `
 你是“语依”系统中的社会技能行为编码与辅助评分模块。
@@ -750,7 +761,7 @@ ${STRUCTURED_SCORE_RULES}
 12. 不揣测用户的动机、品格或情绪原因。短句、拒绝、测试性输入和一时离题都只能视为“当前信息不足”，不能作为负面人格或行为标签。
 
 场景：${sceneTitle}
-背景信息：${sceneSetting || "未提供"}
+被试可见信息：${visibleFacts}
 内部任务目标：${sceneHint}
 用户回答：${userReply}
 本次支持强度：${trainingLevel || "guided"}
@@ -836,12 +847,26 @@ function fallbackGeneratedScene({ relation, place, goal }) {
     "回应邀请": "我们等会儿要一起过去，你方便一起吗？",
     "解释计划变化": "我这边临时有一点变化，想和你说一下怎么安排。",
   };
+  const studentInfoByGoal = {
+    "确认见面安排": ["你现在在" + placeText + "附近。", "你和" + relationText + "约在这里见面。", "你还不确定对方的具体位置。"],
+    "礼貌求助": ["你现在在" + placeText + "。", "你需要找到集合点，但不清楚怎么走。", "你可以向" + relationText + "说明自己需要什么帮助。"],
+    "回应邀请": ["你现在在" + placeText + "。", "对方邀请你一起参加一项活动。", "你可以接受、婉拒，或先问清楚安排。"],
+    "解释计划变化": ["你原本和" + relationText + "约好在" + placeText + "见面。", "你还需要大约十分钟才能到。", "你需要说明变化并商量下一步。"],
+  };
+  const roleInfoByGoal = {
+    "确认见面安排": [relationText + "在" + placeText + "的服务台旁等你。"],
+    "礼貌求助": ["集合点在" + placeText + "入口旁。"],
+    "回应邀请": ["活动半小时后开始，在" + placeText + "入口集合。"],
+    "解释计划变化": [relationText + "可以等十分钟，再确认是否需要调整安排。"],
+  };
   return {
     title: (String(place || "日常") + String(goal || "沟通")).slice(0, 14),
     subtitle: "生成练习情境",
     role: relationText,
     roleStyle: "你是" + relationText + "。围绕已经提供的背景自然交流，不新增未出现的人物、任务或事实；一次只追问一个具体信息。",
     setting: "你在" + placeText + "，需要和" + relationText + goalText + "。先根据对方回应，再决定下一步。",
+    studentInfo: studentInfoByGoal[goal] || studentInfoByGoal["确认见面安排"],
+    roleInfo: roleInfoByGoal[goal] || roleInfoByGoal["确认见面安排"],
     hint: "围绕" + goalText + "，练习清楚表达、确认信息和自然回应。",
     target: "观察学员能否在" + String(place || "日常") + "情境中" + goalText + "。",
     starter: starterMap[goal] || "我想和你确认一下接下来的安排。",
@@ -858,6 +883,12 @@ function normalizeGeneratedScene(value, input) {
   const expected = Array.isArray(value.expected)
     ? value.expected.map((item) => sanitizeModelText(String(item || "")).trim().slice(0, 40)).filter(Boolean).slice(0, 4)
     : fallback.expected;
+  const studentInfo = Array.isArray(value.studentInfo)
+    ? value.studentInfo.map((item) => sanitizeModelText(String(item || "")).replace(/\s+/g, " ").trim().slice(0, 36)).filter(Boolean).slice(0, 3)
+    : fallback.studentInfo;
+  const roleInfo = Array.isArray(value.roleInfo)
+    ? value.roleInfo.map((item) => sanitizeModelText(String(item || "")).replace(/\s+/g, " ").trim().slice(0, 42)).filter(Boolean).slice(0, 2)
+    : fallback.roleInfo;
   return {
     ...fallback,
     title: text("title", 18, fallback.title),
@@ -865,6 +896,8 @@ function normalizeGeneratedScene(value, input) {
     role: text("role", 12, fallback.role),
     roleStyle: text("roleStyle", 180, fallback.roleStyle),
     setting: text("setting", 100, fallback.setting),
+    studentInfo: studentInfo.length === 3 ? studentInfo : fallback.studentInfo,
+    roleInfo: roleInfo.length ? roleInfo : fallback.roleInfo,
     hint: text("hint", 80, fallback.hint),
     target: text("target", 90, fallback.target),
     starter: text("starter", 80, fallback.starter),
@@ -893,11 +926,11 @@ app.post("/api/scene/generate", async (req, res) => {
       messages: [
         {
           role: "system",
-          content: "你为 12-18 岁学生创建简短、适龄的日常社交练习情境。只输出 JSON，不能包含 markdown。必须避免医学、诊断、危险、暴力、性内容、自伤、羞辱、恋爱依赖和高压冲突。场景必须有明确可见的关系、地点、目标和少量能在对话中使用的事实；不凭空假装看见题目、物品或现场动作。",
+          content: "你为 12-18 岁学生创建简短、适龄的日常社交练习情境。只输出 JSON，不能包含 markdown。必须避免医学、诊断、危险、暴力、性内容、自伤、羞辱、恋爱依赖和高压冲突。场景必须有明确可见的关系、地点、目标和少量能在对话中使用的事实；不凭空假装看见题目、物品或现场动作。所有对话问题必须能根据被试可见信息回答，不能把关键事实只留给 AI。",
         },
         {
           role: "user",
-          content: "请创建一个情境。关系：" + input.relation + "；地点：" + input.place + "；交流目标：" + input.goal + "。\n输出格式：\n{\n  \"title\":\"不超过12个汉字\",\n  \"role\":\"对话对象\",\n  \"roleStyle\":\"对话对象怎么自然说话和追问\",\n  \"setting\":\"不超过70字，给出2-3个可用事实\",\n  \"hint\":\"不超过45字的练习重点\",\n  \"target\":\"不超过50字的观察目标\",\n  \"starter\":\"不超过45字的自然开场\",\n  \"expected\":[\"行为1\",\"行为2\",\"行为3\"]\n}",
+          content: "请创建一个情境。关系：" + input.relation + "；地点：" + input.place + "；交流目标：" + input.goal + "。\n输出格式：\n{\n  \"title\":\"不超过12个汉字\",\n  \"role\":\"对话对象\",\n  \"roleStyle\":\"对话对象怎么自然说话和追问\",\n  \"setting\":\"不超过70字的背景\",\n  \"studentInfo\":[\"被试已知事实1\",\"被试已知事实2\",\"被试可作出的选择或下一步\"],\n  \"roleInfo\":[\"角色知道、仅在被试问到时才说出的事实\"],\n  \"hint\":\"不超过45字的练习重点\",\n  \"target\":\"不超过50字的观察目标\",\n  \"starter\":\"不超过45字的自然开场；只能询问studentInfo中能回答的内容\",\n  \"expected\":[\"行为1\",\"行为2\",\"行为3\"]\n}",
         },
       ],
       temperature: 0.65,
@@ -912,12 +945,13 @@ app.post("/api/scene/generate", async (req, res) => {
 
 app.post("/api/suggest", async (req, res) => {
   try {
-    const { sceneTitle, sceneRole, sceneSetting, sceneHint, starter, messages } = req.body;
+    const { sceneTitle, sceneRole, sceneSetting, sceneFacts, sceneHint, starter, messages } = req.body;
 
     if (!sceneTitle || !sceneHint || !starter) {
       return res.status(400).json({ error: "参数不完整" });
     }
     if (rejectBlockedContent(req, res, (messages || []).filter((m) => m?.sender === "me").map((m) => m.text))) return;
+    const visibleFacts = sceneFactsText(sceneFacts, sceneSetting || "未提供");
 
     const formattedMessages = (messages || []).map((m) => ({
       role: m.sender === "me" ? "user" : "assistant",
@@ -942,7 +976,7 @@ ${MEASUREMENT_AI_BOUNDARY}
         },
         {
           role: "user",
-          content: `场景：${sceneTitle}\n对话对象：${sceneRole || "场景角色"}\n背景信息：${sceneSetting || "未提供"}\n目标：${sceneHint}\n开场：${starter}\n如果用户刚才没有回应对方的问题，请给一句能够自然回到当前事情的短句；不要评价用户，也不要编造背景中没有的事实。`,
+          content: `场景：${sceneTitle}\n对话对象：${sceneRole || "场景角色"}\n被试可见信息：${visibleFacts}\n目标：${sceneHint}\n开场：${starter}\n如果用户刚才没有回应对方的问题，请给一句能够自然回到当前事情的短句；不要评价用户，也不要编造被试可见信息中没有的事实。`,
         },
         ...formattedMessages,
       ],
