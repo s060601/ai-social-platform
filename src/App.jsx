@@ -1110,7 +1110,7 @@ export default function AISocialSkillsPlatform() {
       setMessages((prev) => [...prev, { sender: "other", text: reply }]);
       const finalMessages = [...nextMessages, { sender: "other", text: reply }];
       setAssessmentCompleted(true);
-      setLastScore(scoreData.score || 0);
+      setLastScore(scoreData.scored === false ? 0 : (scoreData.score || 0));
       setScoreDetail({
         contextUnderstanding: scoreData.contextUnderstanding ?? scoreData.relevance ?? 0,
         socialPragmatics: scoreData.socialPragmatics ?? scoreData.clarity ?? 0,
@@ -1128,7 +1128,7 @@ export default function AISocialSkillsPlatform() {
         comment: scoreData.comment || "",
         suggestion: scoreData.suggestion || "",
       });
-      if (scoreData.score) {
+      if (scoreData.scored !== false && scoreData.score) {
         const sessionPayload = {
           module: "assessment",
           moduleName: "情境动态测评",
@@ -2029,12 +2029,12 @@ export default function AISocialSkillsPlatform() {
               </div>
 
               <div style={styles.card}>
-                <div style={styles.sectionTitle}>本次记录</div>
+                <div style={styles.sectionTitle}>这一轮的小提示</div>
                 {assessmentCompleted ? (
                   <div style={{ background: "#eef4ff", borderRadius: "14px", padding: "14px" }}>
                     <div style={{ lineHeight: 1.7 }}>{scoreDetail.evidence || scoreDetail.comment}</div>
                     {scoreDetail.strength && <div style={{ marginTop: "8px", color: "#2f6f55" }}>已体现：{scoreDetail.strength}</div>}
-                    {scoreDetail.supportNeed && <div style={{ marginTop: "8px", color: "#7a5a20" }}>可补充：{scoreDetail.supportNeed}</div>}
+                    {scoreDetail.supportNeed && <div style={{ marginTop: "8px", color: "#7a5a20" }}>小提示：{scoreDetail.supportNeed}</div>}
                     {scoreDetail.suggestion && <div style={{ marginTop: "8px", color: "#4f5f7f" }}>参考表达：{scoreDetail.suggestion}</div>}
                   </div>
                 ) : (

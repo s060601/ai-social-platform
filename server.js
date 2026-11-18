@@ -273,6 +273,39 @@ function hasBlockedTerm(value) {
   return BLOCKED_TERMS.some((term) => normalized.includes(moderationText(term)));
 }
 
+function isLowPressureReply(value) {
+  const normalized = moderationText(value);
+  return [
+    "滚", "走开", "别烦我", "不想说", "不想聊", "算了", "随便", "不知道", "烦死了", "别问了",
+  ].includes(normalized);
+}
+
+function pausedPracticeResult(userReply) {
+  return {
+    scored: false,
+    score: 0,
+    contextUnderstanding: 0,
+    socialPragmatics: 0,
+    emotionResponse: 0,
+    normExpression: 0,
+    dialogueMaintenance: 0,
+    problemSolving: 0,
+    politeness: 0,
+    relevance: 0,
+    clarity: 0,
+    continuation: 0,
+    evidence: "没关系，这一轮先不计入练习记录。等准备好了，我们可以慢一点再试。",
+    strength: "",
+    supportNeed: "可以先说说自己现在的状态，或用一句和当前事情有关的话重新开始。",
+    comment: "听起来你现在可能有点烦，没关系，我们可以慢一点。",
+    suggestion: "可以说：“我现在有点烦，能让我先缓一缓吗？”",
+  };
+}
+
+function pausedRoleReply() {
+  return "听起来你现在有点烦，没关系。我们先不急着说这件事：你想先缓一下，还是愿意告诉我哪里让你不舒服？";
+}
+
 function moderationKey(req) {
   return req.ip || req.socket?.remoteAddress || "unknown";
 }
@@ -568,6 +601,8 @@ app.post("/api/chat", async (req, res) => {
       return res.status(400).json({ error: "参数不完整" });
     }
     if (rejectBlockedContent(req, res, messages.filter((m) => m?.sender === "me").map((m) => m.text))) return;
+    const latestUserMessage = [...messages].reverse().find((message) => message?.sender === "me")?.text;
+    if (isLowPressureReply(latestUserMessage)) return res.json({ reply: pausedRoleReply() });
 
     const systemPrompt = `
 你是“语依”系统中的标准化互动角色。
@@ -584,7 +619,7 @@ ${MEASUREMENT_AI_BOUNDARY}
 6. 如果用户表达不完整，也要先接住，再根据当前关系自然追问一个具体问题。不要用“你应该”“下次要”“你这样不合适”来教育用户。
 7. 不要使用括号旁白或舞台动作，例如“（停顿一下）”“（温和地）”。
 8. 不要评价用户“这样说不合适”“大家会觉得你怎样”，只用当前角色的身份自然回应。
-9. 如果用户粗鲁、拒绝或只回很短一句，角色可以表达困惑、不舒服或继续确认，但必须像真人说话。
+9. 如果用户只回很短一句、表示拒绝、烦躁、调侃、测试性输入或暂时离题，先把它理解为“可能不想继续、还没想好怎么说，或现在有点烦”。第一句必须中性接住，不复述刺激性用词，也不纠正用词、不讲道理、不谈礼貌或态度。例如：“听起来你现在有点烦，没关系，我们慢一点。”随后只给一个低压力入口：要么问一个依据背景、很容易回答的问题，要么给出“想继续说还是先停一下”的选择。禁止使用“你怎么这么说话”“你这样不合适”“要尊重别人”“大家会觉得你怎样”及任何责备性表达。
 10. 场景名称：${sceneTitle}
 11. 角色表现要求：${sceneRoleStyle || "保持符合角色关系的自然语气。"}
 12. 内部任务目标：${sceneHint}
@@ -593,7 +628,7 @@ ${MEASUREMENT_AI_BOUNDARY}
 15. 角色边界：用户始终是学生，“我”指当前角色，“你”指学生；不得把双方的身份、经历或已完成的事情互相调换。
 16. 事实边界：只可使用场景名称、角色表现要求、背景信息、开场白和用户已经说出的信息。不得凭空加入新的活动、地点、人物、作业、题目、页码或任务。
 17. 如果信息不足，不要假装看见了题目、物品或现场动作；只提出一个能够根据已出现信息回答的简短问题，或说明自己需要用户补充什么。
-18. 如果用户答非所问、完全离题，或只说了与当前对话无关的话：不要批评、不要说“你离题了”，也不要突然换到新话题。先用一句简短自然的话接住，再只围绕已给出的背景信息，把对话拉回当前事情，并问一个容易回答的具体问题。比如“我有点没听明白。我们刚才是在确认你什么时候能下楼，你大概还要几分钟？”
+18. 如果用户答非所问、完全离题，或只说了与当前对话无关的话：不要批评、不要说“你离题了”，也不要突然换到新话题。先用一句简短、放松的回应承认对方可能暂时不想答，再只围绕已给出的背景信息，把对话拉回当前事情，并问一个容易回答的具体问题。比如“没关系，我们慢一点。刚才是在确认你什么时候能下楼，你大概还要几分钟？”
 19. 如果用户表示不知道、想不起来或不会说：不要连续追问。可以给一个很短的选择，或用当前角色自然地示范一句可接的话，但不得替用户编造经历。
 20. 当前练习支持强度：${trainingLevel === "guided" ? "引导练习。用户卡住时，你可以给一个很短的二选一或一条可接的话。" : trainingLevel === "supported" ? "半引导。优先自然追问，只有明显卡住时才给一个简短提示。" : "独立挑战。除非用户明确表示不知道，否则不主动给示范或选项。"}
 `;
@@ -609,7 +644,7 @@ ${MEASUREMENT_AI_BOUNDARY}
     const completion = await client.chat.completions.create({
       model: process.env.OPENAI_MODEL,
       messages: chatMessages,
-      temperature: 0.8,
+      temperature: 0.5,
     });
 
     const reply = completionText(completion) || "我明白你的意思了。";
@@ -691,6 +726,7 @@ app.post("/api/score", async (req, res) => {
       return res.status(400).json({ error: "参数不完整" });
     }
     if (rejectBlockedContent(req, res, userReply)) return;
+    if (isLowPressureReply(userReply)) return res.json(pausedPracticeResult(userReply));
 
     const prompt = `
 你是“语依”系统中的社会技能行为编码与辅助评分模块。
@@ -710,7 +746,8 @@ ${STRUCTURED_SCORE_RULES}
 8. 当 score >= 80 时，suggestion 应以具体肯定为主，说明用户已经做到的行为，不要硬挑问题或要求继续补充。
 9. 当 score < 80 时，suggestion 只给一个最优先、可练习的方向，不要罗列多个要求，不要泄露评分维度或内部任务目标。
 10. 为兼容旧前端，同时给出 politeness、relevance、clarity、continuation 四项 0-25 分，分别由礼貌规范、情境理解、社会语用、对话维持折算。
-11. 如果回答没有回应当前情境或明显离题：evidence 只客观说明“尚未回应当前问题”；comment 用一句不批评的引导语；suggestion 只给一句用户现在就能说出口、能回到当前对话的参考表达。不要写“答非所问”“离题”“你应该”。
+11. 如果回答没有回应当前情境或明显离题：evidence 只客观说明“暂时还没有提供与当前事情相关的信息”；comment 先接住用户可能的困惑、烦躁或犹豫，再用一句不批评的引导语；suggestion 只给一句用户现在就能说出口、能回到当前对话的参考表达。不要写“答非所问”“离题”“你应该”“攻击性”“粗鲁”“态度不好”“不配合”或类似的评价性措辞。
+12. 不揣测用户的动机、品格或情绪原因。短句、拒绝、测试性输入和一时离题都只能视为“当前信息不足”，不能作为负面人格或行为标签。
 
 场景：${sceneTitle}
 背景信息：${sceneSetting || "未提供"}
@@ -742,7 +779,7 @@ ${STRUCTURED_SCORE_RULES}
     const completion = await client.chat.completions.create({
       model: process.env.OPENAI_MODEL,
       messages: [{ role: "user", content: prompt }],
-      temperature: 0.3,
+      temperature: 0.2,
     });
 
     const raw = completionText(completion);
