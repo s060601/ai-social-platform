@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { API_BASE } from "./config";
 import { beijingDateKey, beijingTime } from "../shared/time.js";
+import TrackingCheckin from "./TrackingCheckin";
 
 const navs = [
   { key: "students", label: "学员列表" },
   { key: "detail", label: "测评明细" },
+  { key: "tracking", label: "两周观察" },
   { key: "notes", label: "报告批注" },
 ];
 
@@ -514,6 +516,25 @@ export default function TeacherApp() {
               </div>
             )}
           </div>
+        )}
+
+        {activeTab === "tracking" && (
+          selectedStudent ? (
+            <TrackingCheckin
+              student={selectedStudent}
+              authHeaders={authHeaders}
+              accentColor="#22a06b"
+              observerLabel="教师"
+            />
+          ) : (
+            <div style={{ maxWidth: "880px", margin: "0 auto" }}>
+              <div style={styles.card}>
+                <div style={styles.sectionTitle}>两周训练观察</div>
+                <div style={{ color: "#60708f", lineHeight: 1.75 }}>请先在“学员列表”中选择一位学员，再填写可观察的日常表现。该记录用于训练跟踪，不是诊断量表。</div>
+                <button style={{ ...styles.secondaryBtn, marginTop: "14px" }} onClick={() => setActiveTab("students")}>前往学员列表</button>
+              </div>
+            </div>
+          )
         )}
       </div>
     </div>

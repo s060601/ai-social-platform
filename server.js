@@ -89,14 +89,19 @@ loadUsers();
 // ── Session & Note stores ─────────────────────────────────────────────────────
 const SESSIONS_FILE = path.join(__dirname, "sessions.json");
 const NOTES_FILE = path.join(__dirname, "notes.json");
+const TRACKING_FILE = path.join(__dirname, "tracking.json");
 let SESSIONS = [];
 let NOTES = [];
+let TRACKING = [];
 function loadSessions() { try { SESSIONS = JSON.parse(fs.readFileSync(SESSIONS_FILE, "utf-8")); } catch { SESSIONS = []; } }
 function saveSessions() { fs.writeFileSync(SESSIONS_FILE, JSON.stringify(SESSIONS, null, 2), "utf-8"); }
 function loadNotes() { try { NOTES = JSON.parse(fs.readFileSync(NOTES_FILE, "utf-8")); } catch { NOTES = []; } }
 function saveNotes() { fs.writeFileSync(NOTES_FILE, JSON.stringify(NOTES, null, 2), "utf-8"); }
+function loadTracking() { try { TRACKING = JSON.parse(fs.readFileSync(TRACKING_FILE, "utf-8")); } catch { TRACKING = []; } }
+function saveTracking() { fs.writeFileSync(TRACKING_FILE, JSON.stringify(TRACKING, null, 2), "utf-8"); }
 loadSessions();
 loadNotes();
+loadTracking();
 
 function normalizeTranscript(items) {
   if (!Array.isArray(items)) return [];
@@ -551,7 +556,7 @@ ${transcript}
 
 app.post("/api/chat", async (req, res) => {
   try {
-    const { sceneTitle, sceneRole, sceneRoleStyle, sceneSetting, sceneHint, starter, messages } = req.body;
+    const { sceneTitle, sceneRole, sceneRoleStyle, sceneSetting, sceneHint, starter, messages, trainingLevel } = req.body;
 
     if (!sceneTitle || !starter || !Array.isArray(messages)) {
       return res.status(400).json({ error: "参数不完整" });
@@ -584,6 +589,7 @@ ${MEASUREMENT_AI_BOUNDARY}
 17. 如果信息不足，不要假装看见了题目、物品或现场动作；只提出一个能够根据已出现信息回答的简短问题，或说明自己需要用户补充什么。
 18. 如果用户答非所问、完全离题，或只说了与当前对话无关的话：不要批评、不要说“你离题了”，也不要突然换到新话题。先用一句简短自然的话接住，再只围绕已给出的背景信息，把对话拉回当前事情，并问一个容易回答的具体问题。比如“我有点没听明白。我们刚才是在确认你什么时候能下楼，你大概还要几分钟？”
 19. 如果用户表示不知道、想不起来或不会说：不要连续追问。可以给一个很短的选择，或用当前角色自然地示范一句可接的话，但不得替用户编造经历。
+20. 当前练习支持强度：${trainingLevel === "guided" ? "引导练习。用户卡住时，你可以给一个很短的二选一或一条可接的话。" : trainingLevel === "supported" ? "半引导。优先自然追问，只有明显卡住时才给一个简短提示。" : "独立挑战。除非用户明确表示不知道，否则不主动给示范或选项。"}
 `;
 
     const chatMessages = [
@@ -673,7 +679,7 @@ app.post("/api/assist", async (req, res) => {
 
 app.post("/api/score", async (req, res) => {
   try {
-    const { sceneTitle, sceneSetting, sceneHint, userReply } = req.body;
+    const { sceneTitle, sceneSetting, sceneHint, userReply, trainingLevel } = req.body;
 
     if (!sceneTitle || !userReply) {
       return res.status(400).json({ error: "参数不完整" });
@@ -704,6 +710,7 @@ ${STRUCTURED_SCORE_RULES}
 背景信息：${sceneSetting || "未提供"}
 内部任务目标：${sceneHint}
 用户回答：${userReply}
+本次支持强度：${trainingLevel || "guided"}
 
 输出格式：
 {
@@ -763,6 +770,100 @@ ${STRUCTURED_SCORE_RULES}
       error: "评分失败",
       detail: error?.message || "unknown error",
     });
+  }
+});
+
+function fallbackGeneratedScene({ relation, place, goal }) {
+  const relationText = { "同学": "同学", "老师": "老师", "家长": "家长", "工作人员": "服务台工作人员" }[relation] || "同学";
+  const placeText = {
+    "校园操场": "学校操场看台旁",
+    "地铁站": "地铁站服务台附近",
+    "科技馆": "科技馆二层展区入口",
+    "社区图书馆": "社区图书馆一层借阅区",
+  }[place] || "学校公共区域";
+  const goalText = {
+    "确认见面安排": "确认碰面时间和地点",
+    "礼貌求助": "清楚说明需要什么帮助",
+    "回应邀请": "表达是否愿意，并确认安排",
+    "解释计划变化": "说明变化原因，并协商下一步",
+  }[goal] || "确认接下来的安排";
+  const starterMap = {
+    "确认见面安排": "我已经到了，你现在方便确认一下我们在哪里碰面吗？",
+    "礼貌求助": "你好，我遇到一点情况，想请你帮我确认一下。",
+    "回应邀请": "我们等会儿要一起过去，你方便一起吗？",
+    "解释计划变化": "我这边临时有一点变化，想和你说一下怎么安排。",
+  };
+  return {
+    title: (String(place || "日常") + String(goal || "沟通")).slice(0, 14),
+    subtitle: "生成练习情境",
+    role: relationText,
+    roleStyle: "你是" + relationText + "。围绕已经提供的背景自然交流，不新增未出现的人物、任务或事实；一次只追问一个具体信息。",
+    setting: "你在" + placeText + "，需要和" + relationText + goalText + "。先根据对方回应，再决定下一步。",
+    hint: "围绕" + goalText + "，练习清楚表达、确认信息和自然回应。",
+    target: "观察学员能否在" + String(place || "日常") + "情境中" + goalText + "。",
+    starter: starterMap[goal] || "我想和你确认一下接下来的安排。",
+    expected: ["回应当前事情", "补充一个关键信息", "确认或协商下一步"],
+    indicators: ["情境理解", "社会语用", "对话维持", "问题解决"],
+    source: "generated",
+  };
+}
+
+function normalizeGeneratedScene(value, input) {
+  const fallback = fallbackGeneratedScene(input);
+  if (!value || typeof value !== "object") return fallback;
+  const text = (field, max, fallbackValue) => sanitizeModelText(String(value[field] || "")).replace(/\s+/g, " ").trim().slice(0, max) || fallbackValue;
+  const expected = Array.isArray(value.expected)
+    ? value.expected.map((item) => sanitizeModelText(String(item || "")).trim().slice(0, 40)).filter(Boolean).slice(0, 4)
+    : fallback.expected;
+  return {
+    ...fallback,
+    title: text("title", 18, fallback.title),
+    subtitle: "生成练习情境",
+    role: text("role", 12, fallback.role),
+    roleStyle: text("roleStyle", 180, fallback.roleStyle),
+    setting: text("setting", 100, fallback.setting),
+    hint: text("hint", 80, fallback.hint),
+    target: text("target", 90, fallback.target),
+    starter: text("starter", 80, fallback.starter),
+    expected: expected.length >= 2 ? expected : fallback.expected,
+    indicators: fallback.indicators,
+  };
+}
+
+app.post("/api/scene/generate", async (req, res) => {
+  const user = getAuthUser(req);
+  if (!user || user.role !== "student") return res.status(401).json({ error: "请以学生身份登录后生成情境" });
+
+  const relationOptions = ["同学", "老师", "家长", "工作人员"];
+  const placeOptions = ["校园操场", "地铁站", "科技馆", "社区图书馆"];
+  const goalOptions = ["确认见面安排", "礼貌求助", "回应邀请", "解释计划变化"];
+  const input = {
+    relation: relationOptions.includes(req.body?.relation) ? req.body.relation : "同学",
+    place: placeOptions.includes(req.body?.place) ? req.body.place : "校园操场",
+    goal: goalOptions.includes(req.body?.goal) ? req.body.goal : "确认见面安排",
+  };
+  const fallback = fallbackGeneratedScene(input);
+
+  try {
+    const completion = await client.chat.completions.create({
+      model: process.env.OPENAI_MODEL,
+      messages: [
+        {
+          role: "system",
+          content: "你为 12-18 岁学生创建简短、适龄的日常社交练习情境。只输出 JSON，不能包含 markdown。必须避免医学、诊断、危险、暴力、性内容、自伤、羞辱、恋爱依赖和高压冲突。场景必须有明确可见的关系、地点、目标和少量能在对话中使用的事实；不凭空假装看见题目、物品或现场动作。",
+        },
+        {
+          role: "user",
+          content: "请创建一个情境。关系：" + input.relation + "；地点：" + input.place + "；交流目标：" + input.goal + "。\n输出格式：\n{\n  \"title\":\"不超过12个汉字\",\n  \"role\":\"对话对象\",\n  \"roleStyle\":\"对话对象怎么自然说话和追问\",\n  \"setting\":\"不超过70字，给出2-3个可用事实\",\n  \"hint\":\"不超过45字的练习重点\",\n  \"target\":\"不超过50字的观察目标\",\n  \"starter\":\"不超过45字的自然开场\",\n  \"expected\":[\"行为1\",\"行为2\",\"行为3\"]\n}",
+        },
+      ],
+      temperature: 0.65,
+    });
+    const scene = normalizeGeneratedScene(safeParseJSON(completionText(completion)), input);
+    res.json({ scene, generatedBy: "ai" });
+  } catch (error) {
+    console.error("/api/scene/generate error:", error);
+    res.json({ scene: fallback, generatedBy: "fallback" });
   }
 });
 
@@ -934,6 +1035,27 @@ function isBoundStudent(teacherId, studentId) {
   ));
 }
 
+function canAccessTracking(user, studentId) {
+  if (user?.role === "teacher") return isBoundStudent(user.id, studentId);
+  if (user?.role === "parent") {
+    const parent = getStoredUser(user.id);
+    return Number(parent?.childId) === Number(studentId);
+  }
+  return false;
+}
+
+function normalizeTrackingScores(scores) {
+  if (!scores || typeof scores !== "object") return {};
+  return Object.fromEntries(DIMENSION_KEYS.map((key) => {
+    const raw = Number(scores[key]);
+    return [key, Number.isInteger(raw) && raw >= 1 && raw <= 5 ? raw : null];
+  }));
+}
+
+function hasTrackingScore(scores) {
+  return Object.values(scores).some((value) => Number.isInteger(value) && value >= 1 && value <= 5);
+}
+
 // ── Teacher/student binding ─────────────────────────────────────────────────
 
 app.get("/api/teacher/binding-code", (req, res) => {
@@ -1008,7 +1130,7 @@ app.post("/api/student/transcript-sharing", (req, res) => {
 app.post("/api/student/session", (req, res) => {
   const user = getAuthUser(req);
   if (!user || user.role !== "student") return res.status(401).json({ error: "未授权" });
-  const { module, moduleName, score, duration, summary, scene, dimensions, evidence, strength, supportNeed, comment, suggestion, transcript, turnFeedback } = req.body || {};
+  const { module, moduleName, score, duration, summary, scene, dimensions, evidence, strength, supportNeed, comment, suggestion, transcript, turnFeedback, trainingLevel, sceneSource, sceneTarget } = req.body || {};
   if (rejectBlockedContent(req, res, [
     ...(Array.isArray(transcript) ? transcript.filter((item) => item?.sender === "me").map((item) => item.text) : []),
     ...(Array.isArray(turnFeedback) ? turnFeedback.filter((item) => item?.sender === "me").map((item) => item.text) : []),
@@ -1021,6 +1143,9 @@ app.post("/api/student/session", (req, res) => {
     module: module || "train",
     moduleName: moduleName || "测评模块",
     scene: scene || "",
+    trainingLevel: ["guided", "supported", "independent"].includes(trainingLevel) ? trainingLevel : "",
+    sceneSource: sceneSource === "generated" ? "generated" : "library",
+    sceneTarget: sanitizeModelText(String(sceneTarget || "")).slice(0, 120),
     score: Number(score) || 0,
     duration: Number(duration) || 0,
     summary: sanitizeModelText(String(summary || "")).slice(0, 3000),
@@ -1047,6 +1172,48 @@ app.get("/api/student/sessions", (req, res) => {
     .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
     .slice(0, 30);
   res.json(sessions);
+});
+
+// ── Longitudinal training observations ─────────────────────────────────────
+
+app.get("/api/tracking/student/:id", (req, res) => {
+  const user = getAuthUser(req);
+  const studentId = Number(req.params.id);
+  if (!user || !["parent", "teacher"].includes(user.role)) return res.status(401).json({ error: "未授权" });
+  if (!canAccessTracking(user, studentId)) return res.status(403).json({ error: "无权查看该学员的观察记录" });
+
+  const records = TRACKING
+    .filter((record) => Number(record.studentId) === studentId && Number(record.observerId) === Number(user.id))
+    .sort((left, right) => new Date(right.timestamp) - new Date(left.timestamp));
+  res.json({ records });
+});
+
+app.post("/api/tracking/student/:id", (req, res) => {
+  const user = getAuthUser(req);
+  const studentId = Number(req.params.id);
+  if (!user || !["parent", "teacher"].includes(user.role)) return res.status(401).json({ error: "未授权" });
+  if (!canAccessTracking(user, studentId)) return res.status(403).json({ error: "无权为该学员保存观察记录" });
+
+  const scores = normalizeTrackingScores(req.body?.scores);
+  if (!hasTrackingScore(scores)) return res.status(400).json({ error: "请至少填写一项观察" });
+  const student = getStoredUser(studentId);
+  if (!student || student.role !== "student") return res.status(404).json({ error: "学员不存在" });
+
+  const record = {
+    id: crypto.randomBytes(8).toString("hex"),
+    studentId,
+    studentName: student.name,
+    observerId: user.id,
+    observerName: user.name,
+    observerRole: user.role,
+    window: "过去两周",
+    scores,
+    note: sanitizeModelText(String(req.body?.note || "")).slice(0, 400),
+    timestamp: new Date().toISOString(),
+  };
+  TRACKING.push(record);
+  saveTracking();
+  res.json({ ok: true, record });
 });
 
 // ── Teacher endpoints ──────────────────────────────────────────────────────
@@ -1262,7 +1429,7 @@ app.get("/api/parent/student/:id/summary", (req, res) => {
 
 app.post("/api/parent/practice", async (req, res) => {
   try {
-    const { childName, weekReport, trends, latestFeedback } = req.body;
+    const { childName, weekReport, trends, latestFeedback, latestTracking } = req.body;
 
     const reportSummary = weekReport
       ? `本周测评 ${weekReport.totalSessions} 次，平均分 ${weekReport.avgScore}，最强模块：${weekReport.bestModule}，进步：${weekReport.improvement}`
@@ -1273,6 +1440,14 @@ app.post("/api/parent/practice", async (req, res) => {
       : "";
 
     const feedbackNote = latestFeedback?.homework || "";
+    const trackingScores = latestTracking?.scores && typeof latestTracking.scores === "object"
+      ? DIMENSION_KEYS
+        .map((key) => Number(latestTracking.scores[key]))
+        .filter((score) => Number.isInteger(score) && score >= 1 && score <= 5)
+      : [];
+    const trackingSummary = trackingScores.length
+      ? "最近两周训练观察平均 " + (trackingScores.reduce((sum, score) => sum + score, 0) / trackingScores.length).toFixed(1) + "/5；补充观察：" + sanitizeModelText(String(latestTracking?.note || "无")).slice(0, 300)
+      : "暂无两周训练观察记录";
 
     const completion = await client.chat.completions.create({
       model: process.env.OPENAI_MODEL,
@@ -1289,6 +1464,7 @@ ${MEASUREMENT_AI_BOUNDARY}
 测评周报：${reportSummary}
 能力趋势：${trendSummary}
 教师支持任务：${feedbackNote || "无"}
+两周训练观察：${trackingSummary}
 
 请生成：
 1. tip：1 句家庭支持的总体提示，温馨鼓励的语气。

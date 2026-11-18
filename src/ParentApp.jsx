@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { API_BASE } from "./config";
 import { beijingDateKey, beijingTime } from "../shared/time.js";
+import TrackingCheckin from "./TrackingCheckin";
 
 const navs = [
   { key: "report", label: "测评报告" },
+  { key: "tracking", label: "两周观察" },
   { key: "feedback", label: "教师反馈" },
   { key: "practice", label: "家庭支持" },
 ];
@@ -137,6 +139,14 @@ export default function ParentApp() {
     setPracticeLoading(true);
     try {
       const latestNote = summary.notes?.[0];
+      let latestTracking = null;
+      try {
+        const trackingResponse = await fetch(API_BASE + "/api/tracking/student/" + summary.student.id, { headers: authHeaders() });
+        const trackingData = await trackingResponse.json();
+        latestTracking = Array.isArray(trackingData.records) ? trackingData.records[0] || null : null;
+      } catch {
+        latestTracking = null;
+      }
       const res = await fetch(`${API_BASE}/api/parent/practice`, {
         method: "POST",
         headers: authHeaders(),
@@ -148,6 +158,7 @@ export default function ParentApp() {
             bestModule: summary.bestModule,
           },
           latestFeedback: latestNote ? { homework: latestNote.homework } : null,
+          latestTracking: latestTracking ? { scores: latestTracking.scores, note: latestTracking.note } : null,
         }),
       });
       const data = await res.json();
@@ -439,6 +450,15 @@ export default function ParentApp() {
                   ))
                 )}
               </div>
+            )}
+
+            {activeTab === "tracking" && (
+              <TrackingCheckin
+                student={summary.student}
+                authHeaders={authHeaders}
+                accentColor="#f77f00"
+                observerLabel="家长"
+              />
             )}
 
             {activeTab === "practice" && (

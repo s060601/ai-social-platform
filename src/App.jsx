@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { API_BASE } from "./config";
 import { sanitizeModelText } from "../shared/modelText.js";
 import { beijingDateKey, beijingTime } from "../shared/time.js";
+import { TRAINING_LEVELS } from "../shared/tracking.js";
 
 const scenes = [
   {
@@ -263,7 +264,34 @@ const navs = [
   { key: "record", label: "我的记录" },
 ];
 
+const generatedSceneOptions = {
+  relations: ["同学", "老师", "家长", "工作人员"],
+  places: ["校园操场", "地铁站", "科技馆", "社区图书馆"],
+  goals: ["确认见面安排", "礼貌求助", "回应邀请", "解释计划变化"],
+};
+
 const STUDENT_HISTORY_KEY = "yuyi_student_history";
+const STUDENT_GENERATED_SCENES_KEY = "yuyi_generated_scenes";
+
+function recommendTrainingLevel(history, sceneTitle) {
+  const recentScores = history
+    .filter((item) => item.module === "assessment" && item.scene === sceneTitle && Number(item.score) > 0)
+    .slice(0, 3)
+    .map((item) => Number(item.score));
+
+  if (recentScores.length < 2) {
+    return { key: "guided", explanation: "先从引导练习开始，熟悉这个情境后再逐步减少提示。" };
+  }
+
+  const average = recentScores.reduce((sum, score) => sum + score, 0) / recentScores.length;
+  if (average >= 80) {
+    return { key: "independent", explanation: "参考最近 " + recentScores.length + " 次同情境练习的平均表现，适合尝试减少提示。" };
+  }
+  if (average >= 60) {
+    return { key: "supported", explanation: "参考最近 " + recentScores.length + " 次同情境练习的平均表现，保留一个关键提示会更合适。" };
+  }
+  return { key: "guided", explanation: "参考最近 " + recentScores.length + " 次同情境练习，先保留清楚的背景与示范。" };
+}
 
 function getStudentHistoryKey() {
   const token = localStorage.getItem("yuyi_token");
@@ -275,6 +303,19 @@ function getStudentHistoryKey() {
     return `${STUDENT_HISTORY_KEY}:${user.id || user.username || "unknown"}`;
   } catch {
     return `${STUDENT_HISTORY_KEY}:unknown`;
+  }
+}
+
+function getGeneratedScenesKey() {
+  return getStudentHistoryKey().replace(STUDENT_HISTORY_KEY, STUDENT_GENERATED_SCENES_KEY);
+}
+
+function readGeneratedScenes() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(getGeneratedScenesKey()) || "[]");
+    return Array.isArray(stored) ? stored.filter((scene) => scene?.id && scene?.title && scene?.starter).slice(0, 6) : [];
+  } catch {
+    return [];
   }
 }
 
@@ -540,6 +581,11 @@ export default function AISocialSkillsPlatform() {
   const [expandedHistoryId, setExpandedHistoryId] = useState(null);
   const [assessmentCompleted, setAssessmentCompleted] = useState(false);
   const [sceneId, setSceneId] = useState(1);
+  const [generatedScenes, setGeneratedScenes] = useState([]);
+  const [trainingLevel, setTrainingLevel] = useState("guided");
+  const [sceneGenerator, setSceneGenerator] = useState({ relation: "同学", place: "校园操场", goal: "确认见面安排" });
+  const [sceneGenerating, setSceneGenerating] = useState(false);
+  const [sceneGeneratorNotice, setSceneGeneratorNotice] = useState("");
   const [input, setInput] = useState("");
   const [assistInput, setAssistInput] = useState("");
   const [assistOutput, setAssistOutput] = useState(null);
@@ -701,11 +747,14 @@ export default function AISocialSkillsPlatform() {
   const [selectedEmpathy, setSelectedEmpathy] = useState("");
   const [empathyFeedback, setEmpathyFeedback] = useState("请选择一个你最可能会说的话。")
 
-  const currentScene = useMemo(() => scenes.find((s) => s.id === sceneId) || scenes[0], [sceneId]);
+  const allScenes = useMemo(() => [...scenes, ...generatedScenes], [generatedScenes]);
+  const currentScene = useMemo(() => allScenes.find((s) => s.id === sceneId) || allScenes[0] || scenes[0], [allScenes, sceneId]);
   const currentVoice = useMemo(() => voiceScenarios.find((s) => s.id === voiceScenarioId) || voiceScenarios[0], [voiceScenarioId]);
   const currentStory = useMemo(() => stories.find((s) => s.id === storyId) || stories[0], [storyId]);
   const currentEmpathy = useMemo(() => empathyCases.find((s) => s.id === empathyId) || empathyCases[0], [empathyId]);
   const recentHistoryGroups = recentDateModuleGroups(history);
+  const trainingRecommendation = useMemo(() => recommendTrainingLevel(history, currentScene.title), [history, currentScene.title]);
+  const selectedTrainingLevel = TRAINING_LEVELS.find((item) => item.key === trainingLevel) || TRAINING_LEVELS[0];
 
   function normalizeHistoryItem(session) {
     const dimensions = session.dimensions && typeof session.dimensions === "object" ? session.dimensions : {};
@@ -726,6 +775,9 @@ export default function AISocialSkillsPlatform() {
       module: session.module || "",
       moduleName: session.moduleName || "",
       scene: session.scene || "",
+      trainingLevel: session.trainingLevel || "",
+      sceneSource: session.sceneSource || "library",
+      sceneTarget: session.sceneTarget || "",
       summary: session.summary || "",
       dimensions,
       evidence: session.evidence || session.summary || "",
@@ -940,6 +992,7 @@ export default function AISocialSkillsPlatform() {
   useEffect(() => {
     loadStudentHistory();
     loadTeacherBinding();
+    setGeneratedScenes(readGeneratedScenes());
   }, []);
 
   function switchScene(scene) {
@@ -948,7 +1001,46 @@ export default function AISocialSkillsPlatform() {
     setInput("");
     setAssessmentCompleted(false);
     setTextInteractionEnded(false);
+    setTrainingLevel(recommendTrainingLevel(history, scene.title).key);
+    setSceneGeneratorNotice("");
     setActiveTab("train");
+  }
+
+  async function generateScene() {
+    if (sceneGenerating) return;
+    const token = localStorage.getItem("yuyi_token");
+    if (!token) {
+      setSceneGeneratorNotice("请先登录后再生成情境。");
+      return;
+    }
+
+    setSceneGenerating(true);
+    setSceneGeneratorNotice("");
+    try {
+      const response = await fetch(API_BASE + "/api/scene/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify(sceneGenerator),
+      });
+      const data = await response.json();
+      if (!response.ok || !data?.scene) throw new Error(data?.error || "生成情境失败");
+      const generated = {
+        ...data.scene,
+        id: "generated-" + Date.now(),
+        source: "generated",
+      };
+      setGeneratedScenes((current) => {
+        const next = [generated, ...current].slice(0, 6);
+        localStorage.setItem(getGeneratedScenesKey(), JSON.stringify(next));
+        return next;
+      });
+      switchScene(generated);
+      setSceneGeneratorNotice(data.generatedBy === "fallback" ? "已按你的选择生成一个可用情境。" : "已生成一个新的练习情境。");
+    } catch (error) {
+      setSceneGeneratorNotice(error.message || "生成情境失败，请稍后再试。");
+    } finally {
+      setSceneGenerating(false);
+    }
   }
 
   async function checkUserContent(text) {
@@ -991,6 +1083,7 @@ export default function AISocialSkillsPlatform() {
             sceneSetting: currentScene.setting,
             sceneHint: currentScene.hint,
             starter: currentScene.starter,
+            trainingLevel,
             messages: nextMessages,
           }),
         }),
@@ -1001,6 +1094,7 @@ export default function AISocialSkillsPlatform() {
             sceneTitle: currentScene.title,
             sceneSetting: currentScene.setting,
             sceneHint: currentScene.hint,
+            trainingLevel,
             userReply: text,
           }),
         }),
@@ -1039,6 +1133,9 @@ export default function AISocialSkillsPlatform() {
           module: "assessment",
           moduleName: "情境动态测评",
           scene: currentScene.title,
+          trainingLevel,
+          sceneSource: currentScene.source === "generated" ? "generated" : "library",
+          sceneTarget: currentScene.target || currentScene.hint || "",
           score: scoreData.score,
           summary: scoreData.evidence || scoreData.comment || "",
           dimensions: {
@@ -1837,14 +1934,39 @@ export default function AISocialSkillsPlatform() {
             <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
               <div style={styles.card}>
                 <div style={styles.sectionTitle}>选择一个情境</div>
-                {scenes.map((scene) => (
+                {allScenes.map((scene) => (
                   <button key={scene.id} style={styles.sceneBtn(scene.id === sceneId)} onClick={() => switchScene(scene)}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-                      <strong>{scene.title}</strong>
+                      <strong>{scene.title}{scene.source === "generated" ? " · 新生成" : ""}</strong>
                       <span style={{ color: "#7f8cab", fontSize: "13px" }}>{scene.subtitle}</span>
                     </div>
                   </button>
                 ))}
+              </div>
+
+              <div style={styles.card}>
+                <div style={styles.sectionTitle}>按生活线索生成</div>
+                <div style={{ color: "#60708f", fontSize: "14px", lineHeight: 1.65, marginBottom: "12px" }}>只选择关系、地点和交流目标，系统会生成一个有明确背景信息的短情境。</div>
+                {[
+                  ["relation", "和谁交流", generatedSceneOptions.relations],
+                  ["place", "在哪里", generatedSceneOptions.places],
+                  ["goal", "想完成什么", generatedSceneOptions.goals],
+                ].map(([key, label, options]) => (
+                  <label key={key} style={{ display: "grid", gridTemplateColumns: "88px minmax(0, 1fr)", alignItems: "center", gap: "8px", marginTop: "10px", color: "#60708f", fontSize: "13px" }}>
+                    <span>{label}</span>
+                    <select
+                      value={sceneGenerator[key]}
+                      onChange={(event) => setSceneGenerator((current) => ({ ...current, [key]: event.target.value }))}
+                      style={{ width: "100%", border: "1px solid #d9e2f0", borderRadius: "10px", padding: "9px 10px", color: "#31415f", background: "#fff" }}
+                    >
+                      {options.map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  </label>
+                ))}
+                <button style={{ ...styles.secondaryBtn, width: "100%", marginTop: "14px" }} disabled={sceneGenerating} onClick={generateScene}>
+                  {sceneGenerating ? "正在生成..." : "生成新情境"}
+                </button>
+                {sceneGeneratorNotice && <div style={{ color: sceneGeneratorNotice.includes("失败") || sceneGeneratorNotice.includes("请先") ? "#c54b5b" : "#2f6f55", fontSize: "13px", lineHeight: 1.6, marginTop: "10px" }}>{sceneGeneratorNotice}</div>}
               </div>
 
               <div style={styles.card}>
@@ -1853,6 +1975,29 @@ export default function AISocialSkillsPlatform() {
                 <div style={{ background: "#f7f9fd", borderRadius: "16px", padding: "14px", color: "#31415f", lineHeight: 1.75 }}>
                   {currentScene.setting}
                 </div>
+                <div style={{ marginTop: "14px", borderTop: "1px solid #edf1f7", paddingTop: "14px" }}>
+                  <div style={{ fontSize: "13px", color: "#7584a3", fontWeight: 700, marginBottom: "8px" }}>本次练习方式</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                    {TRAINING_LEVELS.map((level) => (
+                      <button
+                        key={level.key}
+                        type="button"
+                        onClick={() => setTrainingLevel(level.key)}
+                        style={{ border: trainingLevel === level.key ? "1px solid #4f7cff" : "1px solid #d9e2f0", background: trainingLevel === level.key ? "#4f7cff" : "#fff", color: trainingLevel === level.key ? "#fff" : "#4f5f7f", borderRadius: "9px", padding: "8px 10px", cursor: "pointer", fontWeight: 700, fontSize: "13px" }}
+                      >
+                        {level.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ color: "#60708f", fontSize: "13px", lineHeight: 1.65, marginTop: "9px" }}>推荐：{TRAINING_LEVELS.find((level) => level.key === trainingRecommendation.key)?.label}。{trainingRecommendation.explanation}</div>
+                  <div style={{ color: "#60708f", fontSize: "13px", lineHeight: 1.65, marginTop: "5px" }}>当前：{selectedTrainingLevel.description}</div>
+                </div>
+                {trainingLevel !== "independent" && (
+                  <div style={{ marginTop: "14px", background: "#eef4ff", borderRadius: "12px", padding: "12px 14px", color: "#445474", lineHeight: 1.7, fontSize: "14px" }}>
+                    <strong>{trainingLevel === "guided" ? "可用信息：" : "关键提示："}</strong>{trainingLevel === "guided" ? (currentScene.target || currentScene.hint) : currentScene.hint}
+                    {trainingLevel === "guided" && currentScene.expected?.length > 0 && <div style={{ marginTop: "6px" }}>可以试着做到：{currentScene.expected.slice(0, 3).join("、")}</div>}
+                  </div>
+                )}
               </div>
             </div>
 
